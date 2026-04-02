@@ -86,7 +86,7 @@ flowchart TB
 
 ### Rotation Flow (step by step)
 
-1. An operator creates a **Web Target** in Akeyless pointing to the rotator's URL (e.g., `http://custom-producer.rotator.svc.cluster.local:8080`).
+1. An operator creates a **Web Target** in Akeyless pointing to the rotator's URL (e.g., `http://custom-producer.rotator.svc.cluster.local:<port>`, where `<port>` is whatever you set via the `PORT` environment variable -- default `8080`).
 2. The operator creates a **Rotated Secret** using that Web Target, with a JSON payload containing a `type` field and all the service-specific configuration (admin credentials, token names, scopes, etc.).
 3. When the rotation interval fires (or the operator triggers it manually), the Akeyless Gateway sends `POST /sync/rotate` to the rotator with the payload.
 4. The rotator parses the `type` field (e.g., `"gitlab_token"`), looks up the matching handler in its internal registry, and calls it.
@@ -224,7 +224,11 @@ curl -s -X POST http://localhost:9999/sync/revoke \
 ### Run with Docker locally
 
 ```bash
+# Default port (8080)
 docker run -p 8080:8080 -e SKIP_AUTH=true ghcr.io/fahmy-kadiri-akl/custom-producer/rotator:latest
+
+# Custom port
+docker run -p 9090:9090 -e PORT=9090 -e SKIP_AUTH=true ghcr.io/fahmy-kadiri-akl/custom-producer/rotator:latest
 ```
 
 ---
@@ -255,11 +259,14 @@ spec:
       - name: rotator
         image: ghcr.io/fahmy-kadiri-akl/custom-producer/rotator:latest
         ports:
-        - containerPort: 8080
+        - containerPort: 8080          # Must match PORT env var
           name: http
         env:
         - name: AKEYLESS_ACCESS_ID
           value: "p-1234567890ab"
+        # Optional: override the default listen port (8080)
+        # - name: PORT
+        #   value: "9090"
         # Optional: restrict to a specific rotated secret name
         # - name: AKEYLESS_ITEM_NAME
         #   value: "/Rotated/my-secret"
@@ -273,13 +280,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /health
-            port: 8080
+            port: 8080                 # Must match PORT env var
           initialDelaySeconds: 5
           periodSeconds: 30
         readinessProbe:
           httpGet:
             path: /health
-            port: 8080
+            port: 8080                 # Must match PORT env var
           initialDelaySeconds: 3
           periodSeconds: 10
 ---
@@ -292,8 +299,8 @@ spec:
   selector:
     app: custom-producer
   ports:
-  - port: 8080
-    targetPort: 8080
+  - port: 8080                         # Must match PORT env var
+    targetPort: 8080                   # Must match PORT env var
     name: http
   type: ClusterIP
 ```
@@ -316,7 +323,7 @@ Test from inside the cluster:
 
 ```bash
 kubectl -n rotator run curl --rm -it --image=curlimages/curl -- \
-  curl -s http://custom-producer.rotator.svc.cluster.local:8080/health
+  curl -s http://custom-producer.rotator.svc.cluster.local:<port>/health
 ```
 
 ### Exposing to the Akeyless Gateway
@@ -328,7 +335,7 @@ The Akeyless Gateway must be able to reach the rotator's service URL. There are 
 Use the Kubernetes service DNS name directly:
 
 ```
-http://custom-producer.rotator.svc.cluster.local:8080
+http://custom-producer.rotator.svc.cluster.local:<port>
 ```
 
 **Scenario B: Gateway is external (Docker, VM, Cloud)**
@@ -345,9 +352,9 @@ spec:
   selector:
     app: custom-producer
   ports:
-  - port: 8080
-    targetPort: 8080
-    nodePort: 30080
+  - port: <port>                       # Must match PORT env var
+    targetPort: <port>                 # Must match PORT env var
+    nodePort: 30080                    # Choose any available NodePort (30000-32767)
   type: NodePort
 ```
 
@@ -358,7 +365,7 @@ Then the URL becomes `http://<node-ip>:30080`.
 If your Akeyless Gateway runs in a different namespace on the same cluster:
 
 ```
-http://custom-producer.rotator.svc.cluster.local:8080
+http://custom-producer.rotator.svc.cluster.local:<port>
 ```
 
 Cross-namespace DNS resolution works out of the box in Kubernetes.
@@ -376,7 +383,7 @@ In the Akeyless Console:
 1. Navigate to **Targets > New > Web Target**
 2. Configure:
    - **Name:** `/Targets/custom-producer` (or any path you prefer)
-   - **URL:** `http://custom-producer.rotator.svc.cluster.local:8080` (your rotator's URL)
+   - **URL:** `http://custom-producer.rotator.svc.cluster.local:<port>` (your rotator's URL)
    - Leave all other fields as defaults
 
 Using the CLI:
@@ -384,7 +391,7 @@ Using the CLI:
 ```bash
 akeyless create-web-target \
   --name "/Targets/custom-producer" \
-  --url "http://custom-producer.rotator.svc.cluster.local:8080"
+  --url "http://custom-producer.rotator.svc.cluster.local:<port>"
 ```
 
 You only need **one Web Target** for all rotation types. Every rotated secret shares this target.
@@ -473,14 +480,14 @@ The deployment manifest references the GHCR image directly. See [Deploying to Ku
 ### 2. Verify the rotator is healthy
 
 ```bash
-curl -s http://<rotator-url>:8080/health
+curl -s http://<rotator-url>:<port>/health
 # {"status":"healthy"}
 ```
 
 ### 3. Test locally with SKIP_AUTH
 
 ```bash
-curl -s -X POST http://<rotator-url>:8080/sync/rotate \
+curl -s -X POST http://<rotator-url>:<port>/sync/rotate \
   -H 'Content-Type: application/json' \
   -d '{
     "payload": "{\"type\":\"gitlab_token\",\"base_url\":\"https://gitlab.example.com\",\"admin_token\":\"glpat-XXXXXXXXXXXXXXXXXXXX\",\"user_id\":2,\"token_name\":\"akeyless-managed\",\"scopes\":[\"api\"],\"expiry_days\":30,\"token_id\":0,\"token\":\"\"}"
@@ -495,7 +502,7 @@ If this is the first rotation (`token_id: 0`, `token: ""`), the rotator creates 
 # Web Target (skip if already created)
 akeyless create-web-target \
   --name "/Targets/custom-producer" \
-  --url "http://custom-producer.rotator.svc.cluster.local:8080"
+  --url "http://custom-producer.rotator.svc.cluster.local:<port>"
 
 # Rotated Secret
 akeyless create-rotated-secret \
