@@ -1,4 +1,4 @@
-# Unified Custom Producer for Akeyless
+# Custom Producer for Akeyless
 
 A single container that rotates credentials across 19 target systems. One Docker image, one Akeyless Web Target, unlimited rotated secrets -- distinguished by the `type` field in the Akeyless payload.
 
