@@ -108,7 +108,7 @@ These targets are implemented and compile but have not been validated against a 
 ## Prerequisites
 
 - **Go 1.25+** (for local development only)
-- **Akeyless Gateway** v4.x+ (any deployment: Docker, Kubernetes, or SaaS)
+- **Akeyless Gateway** v4.x+ (any deployment: Docker, Kubernetes)
 - **Network access** from the rotator to:
   - The Akeyless auth service (`https://auth.akeyless.io`)
   - Each target system's API (e.g., `https://dev.azure.com`, `https://api.cloudflare.com`)
@@ -301,7 +301,7 @@ Use the Kubernetes service DNS name directly:
 http://custom-producer.rotator.svc.cluster.local:8080
 ```
 
-**Scenario B: Gateway is external (Docker, VM, SaaS)**
+**Scenario B: Gateway is external (Docker, VM, Cloud)**
 
 Expose the service via Ingress, LoadBalancer, or NodePort:
 
