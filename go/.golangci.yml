@@ -1,7 +1,6 @@
 linters:
   enable:
     - bodyclose
-    - exportloopref
     - errorlint
     - gofmt
     - govet

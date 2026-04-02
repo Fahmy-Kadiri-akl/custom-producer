@@ -7,7 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 )
 
@@ -46,7 +46,7 @@ func Authenticate(ctx context.Context, creds string, accessID string, opts ...Op
 
 	defer func() { _ = res.Body.Close() }()
 
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return fmt.Errorf("can't read validation response body: %w", err)
 	}
