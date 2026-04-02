@@ -11,7 +11,7 @@ import (
 
 type Target struct{}
 
-func New() *Target        { return &Target{} }
+func New() *Target             { return &Target{} }
 func (t *Target) Type() string { return "jfrog_token" }
 
 func (t *Target) Create(_ context.Context, req *types.CreateRequest) (*types.CreateResponse, error) {

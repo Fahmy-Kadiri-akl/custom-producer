@@ -2,12 +2,12 @@ package azuredevops
 
 // PATPayload is the encrypted payload for Azure DevOps PAT rotation.
 type PATPayload struct {
-	Type         string `json:"type"`          // "pat"
-	Organization string `json:"organization"`  // Azure DevOps org name
-	DisplayName  string `json:"display_name"`  // PAT display name
-	Scope        string `json:"scope"`         // PAT scope (e.g. "app_token")
-	ValidDays    int    `json:"valid_days"`    // PAT validity in days
-	AllOrgs      bool   `json:"all_orgs"`      // Apply to all organizations
+	Type         string `json:"type"`         // "pat"
+	Organization string `json:"organization"` // Azure DevOps org name
+	DisplayName  string `json:"display_name"` // PAT display name
+	Scope        string `json:"scope"`        // PAT scope (e.g. "app_token")
+	ValidDays    int    `json:"valid_days"`   // PAT validity in days
+	AllOrgs      bool   `json:"all_orgs"`     // Apply to all organizations
 
 	// Auth: direct bearer token (for testing / user Azure AD token)
 	BearerToken string `json:"bearer_token,omitempty"`

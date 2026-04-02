@@ -75,7 +75,7 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("token request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("token request (HTTP %d): %s", resp.StatusCode, string(body))
@@ -113,7 +113,7 @@ func (c *Client) CreatePAT(ctx context.Context, org, displayName, scope string, 
 	if err != nil {
 		return nil, fmt.Errorf("API request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("create PAT (HTTP %d): %s", resp.StatusCode, string(body))
@@ -152,7 +152,7 @@ func (c *Client) RevokePAT(ctx context.Context, org, authorizationID string) err
 	if err != nil {
 		return fmt.Errorf("API request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("revoke PAT (HTTP %d): %s", resp.StatusCode, string(body))

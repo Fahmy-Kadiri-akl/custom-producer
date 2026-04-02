@@ -51,7 +51,7 @@ func (c *Client) do(ctx context.Context, method, path string, username, password
 	if err != nil {
 		return nil, 0, fmt.Errorf("execute request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("read response: %w", err)

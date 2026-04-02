@@ -18,7 +18,7 @@ type Client struct {
 }
 
 type TokenResponse struct {
-	Token string `json:"token"`
+	Token    string `json:"token"`
 	IssuedAt string `json:"iat,omitempty"`
 }
 
@@ -47,7 +47,7 @@ func (c *Client) CreateToken(ctx context.Context, account string, expiresIn int)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("create token (HTTP %d): %s", resp.StatusCode, string(body))
@@ -70,7 +70,7 @@ func (c *Client) DeleteToken(ctx context.Context, account, tokenID string) error
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("delete token (HTTP %d): %s", resp.StatusCode, string(body))

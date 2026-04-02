@@ -12,7 +12,7 @@ import (
 // PATTarget handles Azure DevOps PAT rotation (type: "pat").
 type PATTarget struct{}
 
-func NewPATTarget() *PATTarget { return &PATTarget{} }
+func NewPATTarget() *PATTarget    { return &PATTarget{} }
 func (t *PATTarget) Type() string { return "pat" }
 
 func (t *PATTarget) Create(_ context.Context, req *types.CreateRequest) (*types.CreateResponse, error) {

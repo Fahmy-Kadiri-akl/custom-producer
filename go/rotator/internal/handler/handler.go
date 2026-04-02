@@ -34,7 +34,7 @@ func New(reg *registry.Registry, cfg Config) http.Handler {
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"healthy"}`))
+		_, _ = w.Write([]byte(`{"status":"healthy"}`))
 	})
 
 	r.Route("/sync", func(r chi.Router) {
@@ -189,7 +189,7 @@ func handleWebhook() http.HandlerFunc {
 			log.Info().Interface("event", event).Msg("received rotation event")
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"received"}`))
+		_, _ = w.Write([]byte(`{"status":"received"}`))
 	}
 }
 
@@ -202,11 +202,11 @@ func decodeBody(r *http.Request, v interface{}) error {
 
 func jsonOK(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

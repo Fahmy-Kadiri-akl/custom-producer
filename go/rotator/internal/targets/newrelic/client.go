@@ -38,7 +38,7 @@ func (c *Client) query(ctx context.Context, gql string, variables map[string]int
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("NerdGraph (HTTP %d): %s", resp.StatusCode, string(body))
@@ -62,7 +62,7 @@ func (c *Client) CreateUserKey(ctx context.Context, accountID int, name string) 
 	var resp struct {
 		Data struct {
 			APIAccessCreateKeys struct {
-				CreatedKeys []KeyResponse `json:"createdKeys"`
+				CreatedKeys []KeyResponse              `json:"createdKeys"`
 				Errors      []struct{ Message string } `json:"errors"`
 			} `json:"apiAccessCreateKeys"`
 		} `json:"data"`
@@ -95,7 +95,7 @@ func (c *Client) CreateIngestKey(ctx context.Context, accountID int, name, inges
 	var resp struct {
 		Data struct {
 			APIAccessCreateKeys struct {
-				CreatedKeys []KeyResponse `json:"createdKeys"`
+				CreatedKeys []KeyResponse              `json:"createdKeys"`
 				Errors      []struct{ Message string } `json:"errors"`
 			} `json:"apiAccessCreateKeys"`
 		} `json:"data"`

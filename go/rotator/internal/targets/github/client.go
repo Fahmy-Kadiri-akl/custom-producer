@@ -46,7 +46,7 @@ func (c *Client) do(ctx context.Context, method, path string, body interface{}) 
 	if err != nil {
 		return nil, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 	return respBody, resp.StatusCode, nil
 }

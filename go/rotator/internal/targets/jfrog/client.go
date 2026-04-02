@@ -44,7 +44,7 @@ func (c *Client) CreateToken(ctx context.Context, username, scope, description s
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return nil, fmt.Errorf("create token (HTTP %d): %s", resp.StatusCode, string(respBody))
@@ -66,7 +66,7 @@ func (c *Client) RevokeToken(ctx context.Context, tokenID string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("revoke token (HTTP %d): %s", resp.StatusCode, string(body))

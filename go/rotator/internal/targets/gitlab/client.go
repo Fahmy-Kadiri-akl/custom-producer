@@ -43,7 +43,7 @@ func (c *Client) CreatePAT(ctx context.Context, userID int, name string, scopes 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return nil, fmt.Errorf("create PAT (HTTP %d): %s", resp.StatusCode, string(respBody))
@@ -66,7 +66,7 @@ func (c *Client) RevokePAT(ctx context.Context, tokenID int) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("revoke PAT (HTTP %d): %s", resp.StatusCode, string(body))
