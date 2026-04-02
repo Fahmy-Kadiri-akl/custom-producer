@@ -23,6 +23,32 @@ A single container that rotates credentials across 19 target systems. One Docker
 
 ## Architecture
 
+### The Problem
+
+Akeyless provides native rotation for a handful of secret types (AWS IAM keys, database passwords, etc.), but many services that organizations rely on daily have no built-in rotator. Azure DevOps PATs, GitLab tokens, Grafana service account keys, Cloudflare API tokens -- these all need to be rotated, but each would traditionally require its own standalone webhook service. That means separate containers, separate deployments, separate monitoring, and separate maintenance for every service you want to cover.
+
+### The Solution
+
+This project solves that with a single container that handles all of them. Instead of deploying N rotators for N services, you deploy one. The secret itself carries all the context the rotator needs -- which service to talk to, what credentials to use for admin access, what scopes to apply -- encoded as a JSON payload inside the Akeyless rotated secret. The rotator reads a `type` field from that payload to decide which handler to invoke, performs the rotation against the target service's API, and returns the updated payload with the new credential back to Akeyless.
+
+### How It Fits Into Akeyless
+
+Akeyless custom producers work via webhooks. The Akeyless Gateway calls out to an HTTP endpoint whenever it needs to create, rotate, or revoke a secret. This project implements that webhook contract:
+
+- `/sync/create` -- called when a new rotated secret is first created
+- `/sync/rotate` -- called on each rotation interval (or manual trigger)
+- `/sync/revoke` -- called when credentials need to be cleaned up
+
+The Gateway authenticates itself to the rotator using the `AkeylessCreds` header, which the rotator validates against the Akeyless auth service (`auth.akeyless.io`). This ensures only your Gateway can trigger rotations.
+
+### Design Principles
+
+**One container, one Web Target, many secrets.** You create a single Akeyless Web Target pointing to the rotator's URL. Every rotated secret uses that same target -- they are distinguished entirely by the `type` field in their payload. Adding a new credential to rotate means creating a new rotated secret in Akeyless with the right payload JSON. No redeployment, no config changes.
+
+**Configuration lives in the payload, not the environment.** Each rotated secret's payload contains everything needed to reach and authenticate with the target service (base URLs, admin tokens, scopes, user IDs). The rotator itself has no service-specific config -- it reads it all from the payload at rotation time. This means the same container image works for every environment without modification.
+
+**Create-before-revoke by default.** Most targets create the new credential first, then revoke the old one. This ensures zero downtime -- there is always a valid credential available. The old credential revocation is best-effort; if it fails, the rotator logs a warning but still returns success because the new credential is already active.
+
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#4A90D9', 'primaryTextColor': '#fff', 'primaryBorderColor': '#2E6BA4', 'lineColor': '#5C6BC0', 'secondaryColor': '#81C784', 'tertiaryColor': '#FFB74D', 'noteTextColor': '#333', 'noteBkgColor': '#FFF9C4'}}}%%
 flowchart TB
@@ -58,15 +84,19 @@ flowchart TB
     style T5 fill:#FFB74D,stroke:#FF9800,color:#333
 ```
 
-**How it works:**
+### Rotation Flow (step by step)
 
-1. You create one **Web Target** in Akeyless pointing to this container's URL.
-2. You create multiple **Rotated Secrets**, each using the same Web Target but with a different JSON payload containing a `type` field.
-3. When Akeyless triggers rotation, the Gateway sends `POST /sync/rotate` to this container.
-4. The container reads the `type` field from the payload, dispatches to the matching target handler, rotates the credential, and returns the updated payload to Akeyless.
-5. Akeyless stores the updated payload (with the new credential) in the rotated secret.
+1. An operator creates a **Web Target** in Akeyless pointing to the rotator's URL (e.g., `http://custom-producer.rotator.svc.cluster.local:8080`).
+2. The operator creates a **Rotated Secret** using that Web Target, with a JSON payload containing a `type` field and all the service-specific configuration (admin credentials, token names, scopes, etc.).
+3. When the rotation interval fires (or the operator triggers it manually), the Akeyless Gateway sends `POST /sync/rotate` to the rotator with the payload.
+4. The rotator parses the `type` field (e.g., `"gitlab_token"`), looks up the matching handler in its internal registry, and calls it.
+5. The handler authenticates to the target service using the admin credentials from the payload, creates a new token/key, and (best-effort) revokes the old one.
+6. The handler returns the updated payload with the new credential values filled in.
+7. Akeyless stores the updated payload as the new rotated secret value. Applications retrieve the current credential via `akeyless get-rotated-secret-value`.
 
-All target-specific configuration (URLs, admin credentials, scopes, token names) lives **inside the encrypted Akeyless payload** -- not in environment variables or config files. This means one deployment serves every target type with zero reconfiguration.
+### Internal Code Structure
+
+The rotator uses a registry pattern internally. Each target implements a `Target` interface with `Create`, `Revoke`, and `Rotate` methods. At startup, `main.go` registers all 19 targets. The HTTP handler parses incoming requests, extracts the `type` field, and dispatches to the matching target. This makes adding new targets straightforward -- implement the interface, register it, rebuild.
 
 ---
 
