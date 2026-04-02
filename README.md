@@ -581,6 +581,19 @@ For service accounts without MFA. Requires an Azure AD app registration with the
 
 **Option B: Bearer token (for testing or interactive flows)**
 
+If you already have an Azure AD access token (or cannot use ROPC because the account has MFA), you can pass it directly. The token must be scoped to the Azure DevOps resource (`499b84ac-1321-427f-aa17-267ca6975798`).
+
+To obtain one interactively via the Azure CLI:
+
+```bash
+az login
+az account get-access-token \
+  --resource 499b84ac-1321-427f-aa17-267ca6975798 \
+  --query accessToken -o tsv
+```
+
+Then use it in the payload:
+
 ```json
 {
   "type": "pat",
