@@ -3,9 +3,11 @@ linters:
   enable:
     - bodyclose
     - errorlint
-    - gofmt
     - govet
     - ineffassign
     - nilerr
     - noctx
     - wastedassign
+formatters:
+  enable:
+    - gofmt
