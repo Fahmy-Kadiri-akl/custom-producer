@@ -102,7 +102,7 @@ These targets are implemented and compile but have not been validated against a 
 ## Prerequisites
 
 - **Docker** (for building and running the container)
-- **Go 1.22+** (for local development only)
+- **Go 1.25+** (for local development only)
 - **Akeyless Gateway** v4.x+ (any deployment: Docker, Kubernetes, or SaaS)
 - **Network access** from the container to:
   - The Akeyless auth service (`https://auth.akeyless.io`)
@@ -120,7 +120,7 @@ docker build -t custom-producer:latest -f rotator/Dockerfile .
 ```
 
 The Dockerfile uses a multi-stage build:
-1. **Builder stage:** Go 1.22 alpine, compiles a static binary with CGO disabled
+1. **Builder stage:** Go 1.25 alpine, compiles a static binary with CGO disabled
 2. **Runtime stage:** Alpine 3.19 with CA certificates, runs the binary on port 8080
 
 To tag for a registry:
