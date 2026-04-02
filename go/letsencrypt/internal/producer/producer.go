@@ -16,7 +16,7 @@ import (
 	"github.com/go-acme/lego/v4/registration"
 )
 
-const dryRynAccessID = "p-custom"
+const dryRunAccessID = "p-custom"
 const envLEEmail = "LE_EMAIL"
 
 // ErrMissingSubClaim is returned when the original user doesn't have an
@@ -49,7 +49,7 @@ func (p *producer) Create(r *CreateRequest) (*CreateResponse, error) {
 	// dry run mode only makes sure that the producer configuration is valid,
 	// not that the implementation is correct, so it's enough to return a valid
 	// response without actually obtaining a certificate
-	if r.ClientInfo.AccessID == dryRynAccessID {
+	if r.ClientInfo.AccessID == dryRunAccessID {
 		return &CreateResponse{}, nil
 	}
 

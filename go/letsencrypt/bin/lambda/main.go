@@ -15,7 +15,7 @@ import (
 )
 
 func handleRequest(ctx context.Context, r events.APIGatewayV2HTTPRequest) (interface{}, error) {
-	log.Println("new request:", r.RawPath, r.Body)
+	log.Println("new request:", r.RawPath)
 
 	p, err := producer.New(
 		producer.WithDryRunEmail(os.Getenv("LE_DRY_RUN_EMAIL")),

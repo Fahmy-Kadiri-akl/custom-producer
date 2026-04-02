@@ -9,9 +9,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 const validationURL = "https://auth.akeyless.io/validate-producer-credentials"
+
+var authClient = &http.Client{
+	Timeout: 10 * time.Second,
+}
 
 // Authenticate validates that the provided credentials belong to the
 // provided access ID, and optionally makes additional assertions.
@@ -39,14 +44,14 @@ func Authenticate(ctx context.Context, creds string, accessID string, opts ...Op
 		return fmt.Errorf("can't create validation request: %w", err)
 	}
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := authClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("validation request failed: %w", err)
 	}
 
 	defer func() { _ = res.Body.Close() }()
 
-	body, err := io.ReadAll(res.Body)
+	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20)) // 1MB max
 	if err != nil {
 		return fmt.Errorf("can't read validation response body: %w", err)
 	}

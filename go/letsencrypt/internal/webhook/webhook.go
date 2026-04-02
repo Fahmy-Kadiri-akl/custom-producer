@@ -11,7 +11,7 @@ import (
 
 	"github.com/akeylesslabs/custom-producer/go/letsencrypt/internal/producer"
 	"github.com/akeylesslabs/custom-producer/go/pkg/auth"
-	"github.com/gorilla/mux"
+	"github.com/go-chi/chi/v5"
 )
 
 const credsHeader = "AkeylessCreds"
@@ -26,17 +26,17 @@ func New(p producer.Producer, opts ...Option) (http.Handler, error) {
 		opt(h)
 	}
 
-	mux := mux.NewRouter()
+	r := chi.NewRouter()
 
 	// it is very important to authenticate every request to prevent abuse
-	mux.Use(h.auth)
+	r.Use(h.auth)
 
 	// Akeyless custom producer must implement at least 2 endpoints:
 	// create and revoke.
-	mux.HandleFunc("/sync/create", h.handle(h.create(p))).Methods(http.MethodPost)
-	mux.HandleFunc("/sync/revoke", h.handle(h.revoke(p))).Methods(http.MethodPost)
+	r.Post("/sync/create", h.handle(h.create(p)))
+	r.Post("/sync/revoke", h.handle(h.revoke(p)))
 
-	return mux, nil
+	return r, nil
 }
 
 type hook struct {
@@ -60,6 +60,7 @@ type wrapperFunc func(r *http.Request) (interface{}, error)
 
 func (h *hook) create(p producer.Producer) wrapperFunc {
 	return func(r *http.Request) (interface{}, error) {
+		r.Body = http.MaxBytesReader(nil, r.Body, 1<<20) // 1MB max
 		var cr *producer.CreateRequest
 		if err := json.NewDecoder(r.Body).Decode(&cr); err != nil {
 			return nil, newWebhookError("can't read request body", http.StatusBadRequest, err)
@@ -71,6 +72,7 @@ func (h *hook) create(p producer.Producer) wrapperFunc {
 
 func (h *hook) revoke(p producer.Producer) wrapperFunc {
 	return func(r *http.Request) (interface{}, error) {
+		r.Body = http.MaxBytesReader(nil, r.Body, 1<<20) // 1MB max
 		var rr *producer.RevokeRequest
 		if err := json.NewDecoder(r.Body).Decode(&rr); err != nil {
 			return nil, newWebhookError("can't read request body", http.StatusBadRequest, err)
@@ -102,8 +104,9 @@ func (h *hook) handle(f wrapperFunc) http.HandlerFunc {
 			return
 		}
 
+		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(out); err != nil {
-			log.Println("failed to write response: %w", err)
+			log.Printf("failed to write response: %v", err)
 		}
 	}
 }

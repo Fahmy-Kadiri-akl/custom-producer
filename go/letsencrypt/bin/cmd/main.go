@@ -27,5 +27,9 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	log.Fatalln(http.ListenAndServe(":80", h))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	log.Fatalln(http.ListenAndServe(":"+port, h))
 }

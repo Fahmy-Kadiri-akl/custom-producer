@@ -126,8 +126,8 @@ The Dockerfile uses a multi-stage build:
 To tag for a registry:
 
 ```bash
-docker build -t ghcr.io/your-org/custom-producer:1.0.0 -f rotator/Dockerfile .
-docker push ghcr.io/your-org/custom-producer:1.0.0
+docker build -t ghcr.io/fahmy-kadiri-akl/custom-producer/rotator:1.0.0 -f rotator/Dockerfile .
+docker push ghcr.io/fahmy-kadiri-akl/custom-producer/rotator:1.0.0
 ```
 
 ---
@@ -219,7 +219,7 @@ spec:
     spec:
       containers:
       - name: rotator
-        image: ghcr.io/your-org/custom-producer:latest
+        image: ghcr.io/fahmy-kadiri-akl/custom-producer/rotator:latest
         ports:
         - containerPort: 8080
           name: http
