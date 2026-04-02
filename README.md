@@ -7,7 +7,7 @@ A single container that rotates credentials across 19 target systems. One Docker
 - [Architecture](#architecture)
 - [Supported Targets](#supported-targets)
 - [Prerequisites](#prerequisites)
-- [Building the Container](#building-the-container)
+- [Container Image](#container-image)
 - [Running Locally](#running-locally)
 - [Deploying to Kubernetes](#deploying-to-kubernetes)
 - [Configuring Akeyless](#configuring-akeyless)
@@ -23,33 +23,39 @@ A single container that rotates credentials across 19 target systems. One Docker
 
 ## Architecture
 
-```
-                          +---------------------+
-                          |   Akeyless Gateway  |
-                          |                     |
-                          |  Rotated Secret A   |  payload: {"type":"pat", ...}
-                          |  Rotated Secret B   |  payload: {"type":"gitlab_token", ...}
-                          |  Rotated Secret C   |  payload: {"type":"grafana_token", ...}
-                          +--------+------------+
-                                   |
-                          POST /sync/rotate
-                          POST /sync/create
-                          POST /sync/revoke
-                                   |
-                          +--------v------------+
-                          |  Unified Rotator    |
-                          |  (single container) |
-                          |                     |
-                          |  1. Parse "type"    |
-                          |  2. Dispatch to     |
-                          |     target handler  |
-                          |  3. Return updated  |
-                          |     payload         |
-                          +--------+------------+
-                                   |
-            +----------+-----------+-----------+----------+
-            |          |           |           |          |
-         Azure DevOps  GitLab   Grafana   Cloudflare   ... (19 targets)
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#4A90D9', 'primaryTextColor': '#fff', 'primaryBorderColor': '#2E6BA4', 'lineColor': '#5C6BC0', 'secondaryColor': '#81C784', 'tertiaryColor': '#FFB74D', 'noteTextColor': '#333', 'noteBkgColor': '#FFF9C4'}}}%%
+flowchart TB
+    subgraph GW["Akeyless Gateway"]
+        direction TB
+        SA["Rotated Secret A\ntype: pat"]
+        SB["Rotated Secret B\ntype: gitlab_token"]
+        SC["Rotated Secret C\ntype: grafana_token"]
+    end
+
+    GW -- "POST /sync/rotate\nPOST /sync/create\nPOST /sync/revoke" --> R
+
+    subgraph R["Unified Rotator - single container"]
+        direction TB
+        P["1. Parse type field"]
+        D["2. Dispatch to target handler"]
+        U["3. Return updated payload"]
+        P --> D --> U
+    end
+
+    R --> T1["Azure DevOps"]
+    R --> T2["GitLab"]
+    R --> T3["Grafana"]
+    R --> T4["Cloudflare"]
+    R --> T5["... 19 targets"]
+
+    style GW fill:#4A90D9,stroke:#2E6BA4,color:#fff
+    style R fill:#81C784,stroke:#4CAF50,color:#fff
+    style T1 fill:#FFB74D,stroke:#FF9800,color:#333
+    style T2 fill:#FFB74D,stroke:#FF9800,color:#333
+    style T3 fill:#FFB74D,stroke:#FF9800,color:#333
+    style T4 fill:#FFB74D,stroke:#FF9800,color:#333
+    style T5 fill:#FFB74D,stroke:#FF9800,color:#333
 ```
 
 **How it works:**
@@ -101,34 +107,34 @@ These targets are implemented and compile but have not been validated against a 
 
 ## Prerequisites
 
-- **Docker** (for building and running the container)
 - **Go 1.25+** (for local development only)
 - **Akeyless Gateway** v4.x+ (any deployment: Docker, Kubernetes, or SaaS)
-- **Network access** from the container to:
+- **Network access** from the rotator to:
   - The Akeyless auth service (`https://auth.akeyless.io`)
   - Each target system's API (e.g., `https://dev.azure.com`, `https://api.cloudflare.com`)
 
 ---
 
-## Building the Container
+## Container Image
 
-From the `go/` directory:
+The container image is built and pushed automatically by GitHub Actions on every push to `master`.
 
-```bash
-cd go
-docker build -t custom-producer:latest -f rotator/Dockerfile .
+```
+ghcr.io/fahmy-kadiri-akl/custom-producer/rotator:latest
 ```
 
-The Dockerfile uses a multi-stage build:
-1. **Builder stage:** Go 1.25 alpine, compiles a static binary with CGO disabled
-2. **Runtime stage:** Alpine 3.19 with CA certificates, runs the binary on port 8080
+Tags available:
+- `latest` -- always points to the latest `master` build
+- `<short-sha>` -- pinned to a specific commit (e.g., `ghcr.io/fahmy-kadiri-akl/custom-producer/rotator:ee392f4`)
+- `<version>` -- semver tags when a release is created (e.g., `v1.0.0` produces `1.0.0` and `1.0`)
 
-To tag for a registry:
+Pull it directly for deployment:
 
 ```bash
-docker build -t ghcr.io/fahmy-kadiri-akl/custom-producer/rotator:1.0.0 -f rotator/Dockerfile .
-docker push ghcr.io/fahmy-kadiri-akl/custom-producer/rotator:1.0.0
+docker pull ghcr.io/fahmy-kadiri-akl/custom-producer/rotator:latest
 ```
+
+Dependencies are updated automatically via a monthly GitHub Actions workflow and Dependabot.
 
 ---
 
@@ -188,9 +194,7 @@ curl -s -X POST http://localhost:9999/sync/revoke \
 ### Run with Docker locally
 
 ```bash
-cd go
-docker build -t custom-producer:latest -f rotator/Dockerfile .
-docker run -p 8080:8080 -e SKIP_AUTH=true custom-producer:latest
+docker run -p 8080:8080 -e SKIP_AUTH=true ghcr.io/fahmy-kadiri-akl/custom-producer/rotator:latest
 ```
 
 ---
@@ -430,11 +434,11 @@ This walkthrough creates a GitLab PAT rotation from scratch.
 ### 1. Deploy the rotator
 
 ```bash
-cd go
-docker build -t custom-producer:latest -f rotator/Dockerfile .
-# Push to your registry or load into your cluster
+kubectl create namespace rotator
 kubectl -n rotator apply -f deployment.yaml
 ```
+
+The deployment manifest references the GHCR image directly. See [Deploying to Kubernetes](#deploying-to-kubernetes) for the full manifest.
 
 ### 2. Verify the rotator is healthy
 
@@ -1231,12 +1235,9 @@ curl -s -X POST http://localhost:9999/sync/rotate \
   }' | jq .
 ```
 
-### Step 4: Rebuild the Docker image
+### Step 4: Push and let CI build
 
-```bash
-cd go
-docker build -t custom-producer:latest -f rotator/Dockerfile .
-```
+Commit your changes and push to `master`. The GitHub Actions Docker workflow builds and pushes the updated image automatically.
 
 ---
 
@@ -1440,10 +1441,15 @@ The rotator returns the full payload with updated credential fields. Akeyless st
 ## Project Structure
 
 ```
+.github/
+  dependabot.yml                        # Monthly Dockerfile and Actions version bumps
+  workflows/
+    build.yaml                          # Lint, build, vet, govulncheck on every push/PR
+    docker.yaml                         # Build and push container image to GHCR
+    deps.yaml                           # Monthly Go dependency update PRs
 go/
   rotator/
-    Dockerfile                          # Multi-stage alpine build
-    README.md                           # This file
+    Dockerfile                          # Multi-stage Go 1.25 + Alpine 3.21 build
     bin/cmd/main.go                     # Entrypoint: registers all 19 targets, starts HTTP server
     internal/
       handler/handler.go                # HTTP routes, auth middleware, type-based dispatch
