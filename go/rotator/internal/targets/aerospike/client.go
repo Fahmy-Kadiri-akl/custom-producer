@@ -23,6 +23,10 @@ type Client struct {
 // seeds is a comma-separated list of "host:port" entries (e.g. "10.0.0.1:3000,10.0.0.2:3000").
 // authMode may be "internal" (default), "external", or "pki".
 func NewClient(seeds, tlsName, authMode, adminUser, adminPassword string) (*Client, error) {
+	if err := preflight(seeds, tlsName); err != nil {
+		return nil, err
+	}
+
 	hosts, err := parseSeeds(seeds, tlsName)
 	if err != nil {
 		return nil, err
@@ -41,6 +45,67 @@ func NewClient(seeds, tlsName, authMode, adminUser, adminPassword string) (*Clie
 		return nil, wrapSecurityError(aerr, "connect to Aerospike cluster")
 	}
 	return &Client{inner: inner}, nil
+}
+
+// preflight opens a short-lived unauthenticated raw connection to the first
+// reachable seed and inspects the "build-edition" and "features" info fields.
+// It returns a clean human-readable error if the cluster is Community Edition
+// or lacks the "security" feature. It returns a connect-error wrapped with
+// context if no seed is reachable — network/TLS failures must NOT be
+// interpreted as "not EE".
+//
+// This deliberately uses as.NewConnection (raw TCP + info protocol) rather
+// than as.NewClientWithPolicyAndHost, because the full cluster-join handshake
+// can itself fail opaquely against CE (e.g. "buffer size invalid") before we
+// ever get a chance to read an info field.
+func preflight(seeds, tlsName string) error {
+	hosts, err := parseSeeds(seeds, tlsName)
+	if err != nil {
+		return err
+	}
+	if len(hosts) == 0 {
+		return fmt.Errorf("no seeds provided")
+	}
+
+	policy := as.NewClientPolicy()
+	if tlsName != "" {
+		policy.TlsConfig = nil // caller-provided TLS is out of scope for the stub probe
+	}
+
+	var (
+		info        map[string]string
+		lastConnErr error
+	)
+	for _, h := range hosts {
+		conn, aerr := as.NewConnection(policy, h)
+		if aerr != nil {
+			lastConnErr = fmt.Errorf("dial %s:%d: %s", h.Name, h.Port, aerr.Error())
+			continue
+		}
+		m, ierr := conn.RequestInfo("build-edition", "features")
+		conn.Close()
+		if ierr != nil {
+			lastConnErr = fmt.Errorf("info probe on %s:%d: %s", h.Name, h.Port, ierr.Error())
+			continue
+		}
+		info = m
+		lastConnErr = nil
+		break
+	}
+	if info == nil {
+		msg := "no reachable seeds"
+		if lastConnErr != nil {
+			msg = lastConnErr.Error()
+		}
+		return fmt.Errorf("preflight connect to Aerospike cluster: %s", msg)
+	}
+
+	edition := info["build-edition"]
+	features := info["features"]
+	if !strings.Contains(strings.ToLower(edition), "enterprise") || !strings.Contains(features, "security") {
+		return fmt.Errorf("Aerospike security not available: cluster reports build-edition=%q (features=%q). Enterprise Edition with security enabled is required for password rotation.", edition, features)
+	}
+	return nil
 }
 
 // ChangePassword invokes the Aerospike admin ChangePassword wire command.
