@@ -3,6 +3,7 @@ module github.com/akeylesslabs/custom-producer/go
 go 1.25.0
 
 require (
+	github.com/aerospike/aerospike-client-go/v8 v8.7.0
 	github.com/aws/aws-lambda-go v1.54.0
 	github.com/go-acme/lego/v4 v4.33.0
 	github.com/go-chi/chi/v5 v5.2.5
@@ -27,9 +28,12 @@ require (
 	github.com/aws/smithy-go v1.24.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
+	github.com/kr/pretty v0.3.1 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/miekg/dns v1.1.72 // indirect
+	github.com/wadey/gocovmerge v0.0.0-20160331181800-b5bfa59ec0ad // indirect
+	github.com/yuin/gopher-lua v1.1.2 // indirect
 	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.52.0 // indirect
@@ -37,6 +41,7 @@ require (
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 exclude github.com/labstack/echo/v4 v4.1.11

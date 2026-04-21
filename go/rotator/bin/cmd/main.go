@@ -7,6 +7,7 @@ import (
 
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/handler"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/registry"
+	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/aerospike"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/ansible"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/argocd"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/azuredevops"
@@ -70,6 +71,9 @@ func main() {
 	reg.Register(confluent.New())
 	reg.Register(servicenow.New())
 	reg.Register(okta.New())
+
+	// Databases
+	reg.Register(aerospike.New())
 
 	log.Info().
 		Strs("targets", reg.Types()).

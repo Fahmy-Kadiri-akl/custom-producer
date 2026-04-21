@@ -132,6 +132,7 @@ These targets are implemented and compile but have not been validated against a 
 | `sendgrid_key` | SendGrid | API keys | signup.sendgrid.com |
 | `okta_key` | Okta | SSWS API tokens | developer.okta.com/signup |
 | `newrelic_key` | New Relic | User and ingest API keys | newrelic.com/signup |
+| `aerospike_password` | Aerospike | User passwords (admin wire protocol) | Requires Aerospike EE (security enabled); CE returns a clear SECURITY_NOT_ENABLED error |
 
 ---
 
@@ -1129,6 +1130,49 @@ Rotates New Relic API keys via the NerdGraph GraphQL API.
 | `key_name` | Yes | -- | Display name for the key |
 | `key_id` | Managed | -- | Current key ID (`NRAK-...` or `NRII-...`) |
 | `key` | Managed | -- | Current key value |
+
+---
+
+### aerospike_password
+
+Rotates an Aerospike Database user's password via the admin wire protocol
+(ChangePassword command) using [aerospike-client-go v8](https://github.com/aerospike/aerospike-client-go).
+Generates a random 24-character password by default.
+
+```json
+{
+  "type": "aerospike_password",
+  "seeds": "aerospike-0.aerospike.svc:3000,aerospike-1.aerospike.svc:3000",
+  "tls_name": "",
+  "auth_mode": "internal",
+  "admin_user": "admin",
+  "admin_password": "admin-password",
+  "target_user": "svc-app",
+  "password": "",
+  "password_length": 24
+}
+```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `seeds` | Yes | -- | Comma-separated seed list of `host:port` entries |
+| `tls_name` | No | -- | Expected TLS certificate name (when TLS is enabled on the cluster) |
+| `auth_mode` | No | `internal` | One of `internal`, `external`, or `pki` |
+| `admin_user` | Yes | -- | Aerospike admin account used to perform the rotation |
+| `admin_password` | Yes | -- | Password for `admin_user` |
+| `target_user` | Yes | -- | Aerospike user whose password will be rotated |
+| `password` | Managed | -- | Current password (overwritten on each rotation) |
+| `password_length` | No | `24` | Length of the generated password |
+
+**Notes.** Aerospike security (users, roles, passwords) is an Enterprise
+Edition feature; it is not present in Community Edition, and a feature-key
+enabling security is required on Enterprise clusters. This rotator ships
+EE-shaped so it can be deployed today against CE while EE licensing is
+arranged. A rotation call against a cluster without security enabled returns
+a wrapped `SECURITY_NOT_ENABLED` error from the producer with message
+"Aerospike security not enabled on cluster — Enterprise Edition (or
+feature-key-enabled build) required for password rotation". Once the
+cluster has security enabled, rotations succeed with no code changes.
 
 ---
 
