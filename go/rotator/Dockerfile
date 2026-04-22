@@ -6,10 +6,15 @@ COPY . .
 RUN CGO_ENABLED=0 GOARCH=amd64 GOOS=linux go build \
     -a -installsuffix cgo \
     -ldflags '-extldflags "-static"' \
-    -o /rotator ./rotator/bin/cmd
+    -o /rotator ./rotator/bin/cmd && \
+    CGO_ENABLED=0 GOARCH=amd64 GOOS=linux go build \
+    -a -installsuffix cgo \
+    -ldflags '-extldflags "-static"' \
+    -o /get-refresh-token ./rotator/bin/get-refresh-token
 
 FROM alpine:3.21
 RUN apk --no-cache add ca-certificates
 COPY --from=builder /rotator /rotator
+COPY --from=builder /get-refresh-token /get-refresh-token
 EXPOSE 8080
 ENTRYPOINT ["/rotator"]

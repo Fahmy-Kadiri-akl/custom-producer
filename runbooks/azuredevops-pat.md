@@ -4,7 +4,7 @@
 > **Scope:** Azure AD (Entra ID) app registration, OAuth 2.0 refresh-token bootstrap, and Akeyless Rotated Secret wiring. Covers everything needed to make Azure DevOps PAT rotation work end to end.
 > **Status:** Verified in production against the custom-producer rotator.
 > **Estimated time:** ~15 minutes for initial bootstrap; ~2 minutes to re-bootstrap after RT expiry.
-> **Prerequisites:** Global Administrator (or Application Administrator + Cloud Application Administrator) on the Entra tenant; Azure DevOps organization membership for the user who will own the rotated PATs; `az` CLI signed in to the right tenant; Go 1.21+ for the one-time device-code helper.
+> **Prerequisites:** Global Administrator (or Application Administrator + Cloud Application Administrator) on the Entra tenant; Azure DevOps organization membership for the user who will own the rotated PATs; `az` CLI signed in to the right tenant; `kubectl` access to the namespace running the rotator (the device-code bootstrap runs via `kubectl exec` into the rotator pod; no separate Go toolchain required).
 
 ---
 
@@ -123,7 +123,7 @@ This runbook involves up to **three different people**. If you are handing off s
 |---|---|---|
 | **A. Entra tenant admin** | Global Administrator, **or** Application Administrator + Cloud Application Administrator on the tenant. Can register apps and grant admin consent for delegated Microsoft Graph / Azure DevOps scopes. | 1a, 1b, 1c, 1d, 1e; Decommission steps 1–3 |
 | **B. Delegated user** | Regular Entra user with membership in the target Azure DevOps organization and permission to create PATs (any org member by default, unless your org disabled "Allow users to create full-scoped PATs"). May be the same person as Role A or a different person. MFA is fine. | 2c (interactive browser sign-in only) |
-| **C. Automation operator / Akeyless admin** | Whoever owns the Akeyless account and the rotator deployment. Needs: admin access in Akeyless (to create/update Web Targets and Rotated Secrets), write access to the rotator's Kubernetes namespace (or wherever the rotator runs), ability to run a Go program. Needs no Azure permissions. | 2a, 2b, 2d, 2e, Step 4, Verification, ongoing operations |
+| **C. Automation operator / Akeyless admin** | Whoever owns the Akeyless account and the rotator deployment. Needs: admin access in Akeyless (to create/update Web Targets and Rotated Secrets), write access to the rotator's Kubernetes namespace (to `kubectl exec` into the pod for the bootstrap helper, and to patch secrets). Needs no Azure permissions. | 2a, 2b, 2d, 2e, Step 4, Verification, ongoing operations |
 
 If Role A is not you: skip directly to [Step 1: Register the Entra app](#step-1-register-the-entra-app), copy the commands for steps 1a to 1e verbatim into a ticket or DM to your tenant admin, ask them to run the commands and return `APP_ID` and the tenant ID. Resume from Step 2.
 
@@ -262,187 +262,43 @@ ADO_ORG    = <your Azure DevOps org name>
 
 > **👤 Performed by: Role C (automation operator) + Role B (delegated user)**
 > **Required permissions:**
-> - Role C needs only local shell access and Go installed. No Azure permissions.
+> - Role C needs `kubectl exec` into the rotator pod. No Azure permissions, no Go toolchain.
 > - Role B needs to be an active Entra user in the same tenant and a member of the target Azure DevOps organization with PAT-creation rights. MFA is fine.
-> **If Role B isn't you:** after running 2b, send the URL and user code (from `/tmp/rt.err`) to the delegated user with the instructions from 2c. You continue with 2d as soon as they complete sign-in.
+> **If Role B isn't you:** after running 2b, send the URL and user code (printed to your terminal by `kubectl exec`) to the delegated user with the instructions from 2c. You continue with 2d as soon as they complete sign-in.
 
-This is the one interactive step. The `get-refresh-token` helper does two HTTP requests to Entra (device-code request, then polling for token) and prints an RT to stdout. Everything else (URL, user code, sign-in) is handled by the delegated user in a browser.
+This is the one interactive step. The `get-refresh-token` helper ships inside the rotator image itself, so you run it via `kubectl exec` with no separate build or clone. The helper makes two outbound HTTPS calls to Entra (device-code request, then polling for token) and prints the refresh token to stdout. Everything else (URL, user code, sign-in) is handled by the delegated user in a browser on their own machine.
 
-### 2a. The helper source *(Role C)*
+### 2a. Where the helper lives *(Role C)*
 
-The helper lives in the repo at [`go/rotator/bin/get-refresh-token/main.go`](../go/rotator/bin/get-refresh-token/main.go). Source is reproduced below so you can run it without cloning the repo if you prefer.
+The helper ships as a separate binary inside the same Docker image as the rotator daemon. Source: [`go/rotator/bin/get-refresh-token/main.go`](../go/rotator/bin/get-refresh-token/main.go). It performs the OAuth 2.0 device-code flow and prints a refresh token to stdout.
 
-Save as `get-refresh-token.go`:
-
-```go
-// get-refresh-token performs OAuth 2.0 device-code flow against Entra ID and
-// prints a refresh token to stdout. Intended for one-time bootstrap.
-package main
-
-import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"flag"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"os"
-	"time"
-)
-
-const (
-	deviceCodeURL = "https://login.microsoftonline.com/%s/oauth2/v2.0/devicecode"
-	tokenURL      = "https://login.microsoftonline.com/%s/oauth2/v2.0/token"
-	defaultScope  = "499b84ac-1321-427f-aa17-267ca6975798/.default offline_access"
-)
-
-func main() {
-	tenant := flag.String("tenant", "", "Entra tenant ID (required)")
-	clientID := flag.String("client-id", "", "app registration client ID (required)")
-	scope := flag.String("scope", defaultScope, "OAuth scope")
-	flag.Parse()
-
-	if *tenant == "" || *clientID == "" {
-		fmt.Fprintln(os.Stderr, "usage: get-refresh-token --tenant <id> --client-id <id> [--scope <s>]")
-		os.Exit(2)
-	}
-
-	ctx := context.Background()
-	dc, err := requestDeviceCode(ctx, *tenant, *clientID, *scope)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "device code request failed: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Fprintln(os.Stderr, dc.Message)
-
-	tok, err := pollForToken(ctx, *tenant, *clientID, dc)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "token poll failed: %v\n", err)
-		os.Exit(1)
-	}
-	if tok.RefreshToken == "" {
-		fmt.Fprintln(os.Stderr, "no refresh_token in response (did you include offline_access in scope?)")
-		os.Exit(1)
-	}
-	fmt.Fprintf(os.Stderr, "got refresh_token (scope=%q, access_token expires in %ds)\n", tok.Scope, tok.ExpiresIn)
-	fmt.Println(tok.RefreshToken)
-}
-
-type deviceCodeResp struct {
-	DeviceCode      string `json:"device_code"`
-	UserCode        string `json:"user_code"`
-	VerificationURI string `json:"verification_uri"`
-	ExpiresIn       int    `json:"expires_in"`
-	Interval        int    `json:"interval"`
-	Message         string `json:"message"`
-}
-
-type tokenResp struct {
-	AccessToken      string `json:"access_token"`
-	RefreshToken     string `json:"refresh_token"`
-	ExpiresIn        int    `json:"expires_in"`
-	Scope            string `json:"scope"`
-	Error            string `json:"error"`
-	ErrorDescription string `json:"error_description"`
-}
-
-func requestDeviceCode(ctx context.Context, tenant, clientID, scope string) (*deviceCodeResp, error) {
-	data := url.Values{"client_id": {clientID}, "scope": {scope}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(deviceCodeURL, tenant), bytes.NewBufferString(data.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
-	}
-	var dc deviceCodeResp
-	if err := json.Unmarshal(body, &dc); err != nil {
-		return nil, fmt.Errorf("parse: %w", err)
-	}
-	if dc.Interval <= 0 {
-		dc.Interval = 5
-	}
-	return &dc, nil
-}
-
-func pollForToken(ctx context.Context, tenant, clientID string, dc *deviceCodeResp) (*tokenResp, error) {
-	interval := dc.Interval
-	deadline := time.Now().Add(time.Duration(dc.ExpiresIn) * time.Second)
-	for time.Now().Before(deadline) {
-		time.Sleep(time.Duration(interval) * time.Second)
-		data := url.Values{
-			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
-			"client_id":   {clientID},
-			"device_code": {dc.DeviceCode},
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(tokenURL, tenant), bytes.NewBufferString(data.Encode()))
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		body, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		var tr tokenResp
-		if err := json.Unmarshal(body, &tr); err != nil {
-			return nil, fmt.Errorf("parse (HTTP %d): %w", resp.StatusCode, err)
-		}
-		if tr.AccessToken != "" {
-			return &tr, nil
-		}
-		switch tr.Error {
-		case "authorization_pending":
-			continue
-		case "slow_down":
-			interval += 5
-		default:
-			return nil, fmt.Errorf("%s: %s", tr.Error, tr.ErrorDescription)
-		}
-	}
-	return nil, fmt.Errorf("device code expired before user completed authentication")
-}
-```
+No separate install, clone, or Go toolchain is needed. If the rotator pod is running, the helper is available as `/get-refresh-token` inside the container and you invoke it via `kubectl exec`.
 
 ### 2b. Run it *(Role C)*
 
-From within a clone of this repo:
+Exec into the rotator pod and invoke the helper:
 
 ```bash
-cd go
-go run ./rotator/bin/get-refresh-token \
-  --tenant    "$TENANT_ID" \
-  --client-id "$CLIENT_ID" \
+ROTATOR_NS=<rotator-namespace>
+TENANT_ID=<your-tenant-id>
+CLIENT_ID=<your-app-client-id>
+
+kubectl -n "$ROTATOR_NS" exec -i deploy/rotator -- \
+  /get-refresh-token --tenant "$TENANT_ID" --client-id "$CLIENT_ID" \
   > /tmp/rt.out 2> /tmp/rt.err
 ```
 
-Or, if you saved the source as `get-refresh-token.go` from 2a:
+Why `-i` and not `-it`: the helper writes structured output to stdout (the refresh token) and prompts to stderr. Allocating a TTY (`-t`) mixes the streams and breaks the redirection. Without `-i`, some shells still work, but `-i` is the safe default for streamed output.
 
-```bash
-go run ./get-refresh-token.go \
-  --tenant    "$TENANT_ID" \
-  --client-id "$CLIENT_ID" \
-  > /tmp/rt.out 2> /tmp/rt.err
-```
-
-The URL and user code appear on stderr:
+The URL and user code appear on stderr, which we redirected to `/tmp/rt.err`:
 
 ```bash
 cat /tmp/rt.err
 # To sign in, use a web browser to open the page https://microsoft.com/devicelogin
 #  and enter the code XXXXXXXXX to authenticate.
 ```
+
+The helper keeps running inside the pod, polling Entra every 5 seconds. Move on to 2c; step back here once the delegated user completes sign-in.
 
 ### 2c. Interactive sign-in *(Role B, the delegated user)*
 
@@ -458,7 +314,7 @@ cat /tmp/rt.err
 >
 > Please reply here when you've completed the sign-in so the automation operator can capture the result.
 
-The helper (still running on Role C's machine) polls Entra every 5 seconds. On success it prints `got refresh_token (…)` to stderr and the RT itself to stdout.
+The helper (still running inside the rotator pod via the `kubectl exec` session on Role C's terminal) polls Entra every 5 seconds. On success it prints `got refresh_token (…)` to stderr and the RT itself to stdout, which the redirection in 2b captured to `/tmp/rt.out` on Role C's local machine.
 
 ### 2d. Capture the RT *(Role C)*
 
