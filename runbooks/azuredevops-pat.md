@@ -94,7 +94,7 @@ sequenceDiagram
 | **`get-refresh-token` helper** | One-shot Go CLI that runs device-code flow and prints an RT. Source below. | Repo + your laptop |
 | **Automation / rotator** | Whatever consumes the RT to mint PATs. Out of scope for this runbook; see separate rotator runbook. | Wherever your rotation logic runs |
 
-### Key constants (same for every tenant on earth)
+### Key constants for every tenant
 
 | Constant | Value | What it is |
 |---|---|---|
