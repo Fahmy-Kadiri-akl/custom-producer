@@ -18,6 +18,10 @@ type PATPayload struct {
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
 
+	// Auth: refresh-token flow (delegated user, long-lived)
+	RefreshToken string `json:"refresh_token,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"` // optional, confidential clients only
+
 	// Current PAT state (updated by rotation)
 	AuthorizationID string `json:"authorization_id"`
 	Token           string `json:"token"`

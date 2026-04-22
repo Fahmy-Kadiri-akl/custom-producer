@@ -16,19 +16,28 @@ import (
 const (
 	azureADTokenURL = "https://login.microsoftonline.com/%s/oauth2/v2.0/token"
 	devopsScope     = "499b84ac-1321-427f-aa17-267ca6975798/.default"
+	refreshScope    = "499b84ac-1321-427f-aa17-267ca6975798/.default offline_access"
 	patAPIBase      = "https://vssps.dev.azure.com/%s/_apis/tokens/pats"
 	apiVersion      = "7.1-preview.1"
 )
 
 // Client communicates with the Azure DevOps PAT Lifecycle API.
 type Client struct {
-	bearerToken string
-	tenantID    string
-	clientID    string
-	username    string
-	password    string
-	authMode    string // "bearer" or "ropc"
-	httpClient  *http.Client
+	bearerToken  string
+	tenantID     string
+	clientID     string
+	clientSecret string
+	username     string
+	password     string
+	refreshToken string
+	authMode     string // "bearer", "ropc", or "refresh_token"
+	httpClient   *http.Client
+
+	// Per-instance access token cache so a single Rotate call (CreatePAT +
+	// RevokePAT) only exchanges credentials once. Critical for refresh_token
+	// mode where the RT is rolled on each exchange.
+	cachedAccessToken string
+	cachedTokenExpiry time.Time
 }
 
 // PATToken represents an Azure DevOps PAT from the API.
@@ -54,18 +63,48 @@ func NewROPCClient(tenantID, clientID, username, password string) *Client {
 	}
 }
 
+// NewRefreshTokenClient creates a client using OAuth 2.0 refresh-token flow.
+// This is the only viable long-lived auth for PAT minting — service principals
+// cannot create PATs, only delegated user tokens can.
+func NewRefreshTokenClient(tenantID, clientID, clientSecret, refreshToken string) *Client {
+	return &Client{
+		tenantID: tenantID, clientID: clientID,
+		clientSecret: clientSecret, refreshToken: refreshToken,
+		authMode: "refresh_token", httpClient: &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// CurrentRefreshToken returns the current (possibly rolled) refresh token.
+// Callers should persist this after rotation.
+func (c *Client) CurrentRefreshToken() string { return c.refreshToken }
+
 func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 	if c.authMode == "bearer" {
 		return c.bearerToken, nil
 	}
-	tokenURL := fmt.Sprintf(azureADTokenURL, c.tenantID)
-	data := url.Values{
-		"grant_type": {"password"},
-		"client_id":  {c.clientID},
-		"username":   {c.username},
-		"password":   {c.password},
-		"scope":      {devopsScope},
+	if c.cachedAccessToken != "" && time.Now().Before(c.cachedTokenExpiry) {
+		return c.cachedAccessToken, nil
 	}
+
+	data := url.Values{"client_id": {c.clientID}}
+	switch c.authMode {
+	case "ropc":
+		data.Set("grant_type", "password")
+		data.Set("username", c.username)
+		data.Set("password", c.password)
+		data.Set("scope", devopsScope)
+	case "refresh_token":
+		data.Set("grant_type", "refresh_token")
+		data.Set("refresh_token", c.refreshToken)
+		data.Set("scope", refreshScope)
+		if c.clientSecret != "" {
+			data.Set("client_secret", c.clientSecret)
+		}
+	default:
+		return "", fmt.Errorf("unknown auth mode: %s", c.authMode)
+	}
+
+	tokenURL := fmt.Sprintf(azureADTokenURL, c.tenantID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, bytes.NewBufferString(data.Encode()))
 	if err != nil {
 		return "", fmt.Errorf("create token request: %w", err)
@@ -81,10 +120,19 @@ func (c *Client) getAccessToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("token request (HTTP %d): %s", resp.StatusCode, string(body))
 	}
 	var tokenResp struct {
-		AccessToken string `json:"access_token"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
 	}
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return "", fmt.Errorf("parse token: %w", err)
+	}
+	if c.authMode == "refresh_token" && tokenResp.RefreshToken != "" {
+		c.refreshToken = tokenResp.RefreshToken
+	}
+	if tokenResp.ExpiresIn > 60 {
+		c.cachedAccessToken = tokenResp.AccessToken
+		c.cachedTokenExpiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn-60) * time.Second)
 	}
 	return tokenResp.AccessToken, nil
 }

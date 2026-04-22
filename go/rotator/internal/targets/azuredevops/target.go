@@ -77,16 +77,26 @@ func (t *PATTarget) Rotate(ctx context.Context, req *types.RotateRequest) (*type
 
 	p.AuthorizationID = newPAT.AuthorizationID
 	p.Token = newPAT.Token
+	// Persist rolled refresh token so next rotation can authenticate.
+	if p.RefreshToken != "" {
+		p.RefreshToken = client.CurrentRefreshToken()
+	}
 	out, _ := json.Marshal(p)
 	return &types.RotateResponse{Payload: string(out)}, nil
 }
 
 func buildClient(p *PATPayload) (*Client, error) {
+	if p.RefreshToken != "" {
+		if p.TenantID == "" || p.ClientID == "" {
+			return nil, fmt.Errorf("refresh_token requires tenant_id and client_id")
+		}
+		return NewRefreshTokenClient(p.TenantID, p.ClientID, p.ClientSecret, p.RefreshToken), nil
+	}
 	if p.BearerToken != "" {
 		return NewBearerClient(p.BearerToken), nil
 	}
 	if p.Username != "" && p.Password != "" {
 		return NewROPCClient(p.TenantID, p.ClientID, p.Username, p.Password), nil
 	}
-	return nil, fmt.Errorf("no auth: provide bearer_token or username/password with tenant_id/client_id")
+	return nil, fmt.Errorf("no auth: provide refresh_token, bearer_token, or username/password with tenant_id/client_id")
 }
