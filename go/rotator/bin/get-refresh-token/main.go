@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -32,14 +33,15 @@ func main() {
 		os.Exit(2)
 	}
 
-	dc, err := requestDeviceCode(*tenant, *clientID, *scope)
+	ctx := context.Background()
+	dc, err := requestDeviceCode(ctx, *tenant, *clientID, *scope)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "device code request failed: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Fprintln(os.Stderr, dc.Message)
 
-	tok, err := pollForToken(*tenant, *clientID, dc)
+	tok, err := pollForToken(ctx, *tenant, *clientID, dc)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "token poll failed: %v\n", err)
 		os.Exit(1)
@@ -70,9 +72,9 @@ type tokenResp struct {
 	ErrorDescription string `json:"error_description"`
 }
 
-func requestDeviceCode(tenant, clientID, scope string) (*deviceCodeResp, error) {
+func requestDeviceCode(ctx context.Context, tenant, clientID, scope string) (*deviceCodeResp, error) {
 	data := url.Values{"client_id": {clientID}, "scope": {scope}}
-	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf(deviceCodeURL, tenant), bytes.NewBufferString(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(deviceCodeURL, tenant), bytes.NewBufferString(data.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +98,7 @@ func requestDeviceCode(tenant, clientID, scope string) (*deviceCodeResp, error) 
 	return &dc, nil
 }
 
-func pollForToken(tenant, clientID string, dc *deviceCodeResp) (*tokenResp, error) {
+func pollForToken(ctx context.Context, tenant, clientID string, dc *deviceCodeResp) (*tokenResp, error) {
 	interval := dc.Interval
 	deadline := time.Now().Add(time.Duration(dc.ExpiresIn) * time.Second)
 	for time.Now().Before(deadline) {
@@ -106,7 +108,7 @@ func pollForToken(tenant, clientID string, dc *deviceCodeResp) (*tokenResp, erro
 			"client_id":   {clientID},
 			"device_code": {dc.DeviceCode},
 		}
-		req, err := http.NewRequest(http.MethodPost, fmt.Sprintf(tokenURL, tenant), bytes.NewBufferString(data.Encode()))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf(tokenURL, tenant), bytes.NewBufferString(data.Encode()))
 		if err != nil {
 			return nil, err
 		}
