@@ -557,22 +557,56 @@ Test/validation target. Returns the payload with a `rotated_at` timestamp.
 
 Rotates Azure DevOps personal access tokens via the PAT Lifecycle Management API.
 
-Supports two authentication methods:
+Microsoft restricts PAT minting to **delegated user tokens only** — service principals, managed identities, and workload identity federation are rejected by the PATs API. Practically, this leaves three auth options, in order of preference:
 
-**Option A: ROPC flow (recommended for automation)**
+**Option A: Refresh token flow (recommended)**
 
-For service accounts without MFA. Requires an Azure AD app registration with the "Allow public client flows" option enabled.
+OAuth 2.0 `offline_access` flow. A delegated user signs in once interactively and hands the rotator a long-lived refresh token (up to 90 days). Each rotation exchanges the RT for a short-lived access token, mints the PAT, and rolls the RT — the rolled RT is persisted back into the payload so the next cycle can authenticate. Works with MFA and Conditional Access.
+
+One-time bootstrap:
+
+1. Register an Entra app in your tenant: single-tenant, "Allow public client flows" = Yes, delegated permission **Azure DevOps / user_impersonation** with admin consent granted.
+2. Run the device-code helper and sign in as the user who will own the rotated PATs:
+   ```bash
+   go run ./rotator/bin/get-refresh-token \
+     --tenant <your-tenant-id> \
+     --client-id <your-app-client-id>
+   ```
+   It prints a URL + short code; open the URL, enter the code, sign in. The refresh token is printed to stdout (helper status goes to stderr).
+3. Seed the payload:
+   ```json
+   {
+     "type": "pat",
+     "organization": "<your-ado-org>",
+     "display_name": "akeyless-managed-pat",
+     "scope": "app_token",
+     "valid_days": 30,
+     "all_orgs": false,
+     "tenant_id": "<your-tenant-id>",
+     "client_id": "<your-app-client-id>",
+     "refresh_token": "<rt-from-helper>",
+     "authorization_id": "",
+     "token": ""
+   }
+   ```
+   For confidential clients, also set `"client_secret"`. Public clients (the default for device-code apps) omit it.
+
+Caveats: refresh tokens are revoked by Entra on password change, MFA re-prompt (depending on CA policy), admin revoke, or 90 days of inactivity — any of those stalls rotation until a human re-bootstraps. Alert when the RT age crosses ~75 days.
+
+**Option B: ROPC flow**
+
+For non-interactive service accounts without MFA. Requires the same Entra app (public client flows enabled).
 
 ```json
 {
   "type": "pat",
-  "organization": "my-org",
+  "organization": "<your-ado-org>",
   "display_name": "akeyless-managed-pat",
   "scope": "app_token",
   "valid_days": 30,
   "all_orgs": false,
-  "tenant_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  "client_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "tenant_id": "<your-tenant-id>",
+  "client_id": "<your-app-client-id>",
   "username": "svc-account@example.com",
   "password": "service-account-password",
   "authorization_id": "",
@@ -580,11 +614,9 @@ For service accounts without MFA. Requires an Azure AD app registration with the
 }
 ```
 
-**Option B: Bearer token (for testing or interactive flows)**
+**Option C: Bearer token (testing only)**
 
-If you already have an Azure AD access token (or cannot use ROPC because the account has MFA), you can pass it directly. The token must be scoped to the Azure DevOps resource (`499b84ac-1321-427f-aa17-267ca6975798`).
-
-To obtain one interactively via the Azure CLI:
+Pre-obtained Azure AD access token. Short-lived (typically 1 hour) — suitable only for ad-hoc testing, not automation. The token must target the Azure DevOps resource (`499b84ac-1321-427f-aa17-267ca6975798`).
 
 ```bash
 az login
@@ -593,12 +625,10 @@ az account get-access-token \
   --query accessToken -o tsv
 ```
 
-Then use it in the payload:
-
 ```json
 {
   "type": "pat",
-  "organization": "my-org",
+  "organization": "<your-ado-org>",
   "display_name": "akeyless-managed-pat",
   "scope": "app_token",
   "valid_days": 30,
@@ -609,6 +639,8 @@ Then use it in the payload:
 }
 ```
 
+Auth-mode precedence: if `refresh_token` is present it is used; otherwise `bearer_token`; otherwise `username`/`password`. Do not set more than one.
+
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `organization` | Yes | -- | Azure DevOps organization name |
@@ -616,11 +648,13 @@ Then use it in the payload:
 | `scope` | No | `app_token` | PAT scope string |
 | `valid_days` | No | `30` | PAT validity in days |
 | `all_orgs` | No | `false` | Apply to all accessible organizations |
-| `tenant_id` | ROPC | -- | Azure AD tenant ID |
-| `client_id` | ROPC | -- | Azure AD app registration client ID |
-| `username` | ROPC | -- | Service account UPN |
-| `password` | ROPC | -- | Service account password |
-| `bearer_token` | Bearer | -- | Pre-obtained Azure AD access token |
+| `tenant_id` | A/B | -- | Entra tenant ID (refresh_token or ROPC) |
+| `client_id` | A/B | -- | Entra app registration client ID (refresh_token or ROPC) |
+| `refresh_token` | A | -- | Delegated refresh token; rolled on each rotation |
+| `client_secret` | A (confidential) | -- | Client secret for confidential public clients only |
+| `username` | B | -- | Service account UPN (ROPC) |
+| `password` | B | -- | Service account password (ROPC) |
+| `bearer_token` | C | -- | Pre-obtained Azure AD access token (short-lived) |
 | `authorization_id` | Managed | -- | Current PAT authorization ID (set by rotator) |
 | `token` | Managed | -- | Current PAT value (set by rotator) |
 
@@ -1425,9 +1459,17 @@ Grafana enforces unique token names per service account. The rotator handles thi
 ### Azure DevOps ROPC auth returns "interaction_required"
 
 The service account has MFA enabled or conditional access policies are blocking ROPC. ROPC only works for accounts without MFA. Either:
+- Switch to the `refresh_token` auth mode (works with MFA and CA, recommended)
 - Disable MFA for the service account
 - Exclude the Azure AD app from conditional access
-- Use `bearer_token` auth instead (obtain the token through an interactive flow)
+
+### Azure DevOps rotation fails with 400 "AADSTS70000: The provided grant has expired"
+
+The refresh token was revoked by Entra — this happens on password change, explicit admin revoke, some Conditional Access evaluations, or after ~90 days of inactivity. Re-run `bin/get-refresh-token` as the PAT-owning user and update the rotated secret's payload with the new RT. Consider an alert when the RT's rotation cadence drops unexpectedly, or at ~75 days of age.
+
+### Azure DevOps rotation returns ADO HTML sign-in page instead of JSON
+
+The access token presented to the PATs API is invalid or expired — typically a dead `bearer_token` that was manually seeded and never refreshed. Switch to `refresh_token` auth (see above) so the rotator mints a fresh access token on every cycle.
 
 ### Container starts but no rotation happens
 
@@ -1552,7 +1594,7 @@ go/
         echo/target.go                  # Test/validation (no external deps)
         ansible/                        # AWX/AAP password + API key rotation
         argocd/                         # ArgoCD account token rotation
-        azuredevops/                    # Azure DevOps PAT rotation (ROPC + bearer)
+        azuredevops/                    # Azure DevOps PAT rotation (refresh-token + ROPC + bearer)
         cloudflare/                     # Cloudflare API token rotation
         confluent/                      # Confluent Cloud API key rotation
         datadog/                        # Datadog API + application key rotation
