@@ -103,7 +103,7 @@ func preflight(seeds, tlsName string) error {
 	edition := info["build-edition"]
 	features := info["features"]
 	if !strings.Contains(strings.ToLower(edition), "enterprise") || !strings.Contains(features, "security") {
-		return fmt.Errorf("Aerospike security not available: cluster reports build-edition=%q (features=%q). Enterprise Edition with security enabled is required for password rotation.", edition, features)
+		return fmt.Errorf("aerospike security not available: cluster reports build-edition=%q features=%q; Enterprise Edition with security enabled is required for password rotation", edition, features)
 	}
 	return nil
 }
