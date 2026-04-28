@@ -113,6 +113,24 @@ The new token is written to the secret store **before** the old token is revoked
 
 Tokens cannot be extended past their expiry. To get a fresh token, mint a new one. There is no refresh-token concept; the App private key plays the role of the long-lived secret.
 
+### Timers (three different ones, easy to confuse)
+
+| Timer | Lives in | Value | What it controls |
+|---|---|---|---|
+| **JWT `exp` window** | rotator process, in memory only | 9 minutes (hardcoded) | How long the *intermediate* JWT signed with the App private key is valid. The rotator uses it for the *single* call to `POST /app/installations/{id}/access_tokens` and then discards it. |
+| **Installation token TTL** | GitHub | ~1 hour (set by GitHub, not configurable) | How long the `ghs_...` token GitHub returns is valid. This is the value consumers actually authenticate with. |
+| **Rotation interval** | Akeyless rotated secret | `--rotation-interval`, days, Akeyless minimum is 1 | How often Akeyless triggers the rotator's `/sync/rotate` to produce a fresh `ghs_...` token. |
+
+A typical cycle:
+
+1. Akeyless triggers rotation at whatever interval you set (minimum 1 day).
+2. Rotator builds a JWT good for 9 minutes.
+3. Rotator calls `/access_tokens` once with that JWT and gets back a `ghs_...` token good for ~1 hour.
+4. The JWT is discarded immediately. The `ghs_...` token is stored in the rotated secret.
+5. Consumers read the `ghs_...` token until the next rotation produces a fresh one.
+
+The 9-minute JWT window is never the constraining timer in practice, because steps 2 to 4 finish in seconds. It exists only to bound damage if a JWT is somehow captured in flight. The only timer that matters for consumer experience is the **rotation interval**: shorten it to reduce the maximum staleness any consumer will see, lengthen it to reduce churn on the secret value.
+
 ---
 
 ## Prerequisites
