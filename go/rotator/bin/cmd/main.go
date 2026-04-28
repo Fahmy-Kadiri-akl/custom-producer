@@ -48,6 +48,7 @@ func main() {
 
 	// Cloud & DevOps
 	reg.Register(azuredevops.NewPATTarget())
+	reg.Register(azuredevops.NewSPTokenTarget())
 	reg.Register(github.New())
 	reg.Register(gitlab.New())
 	reg.Register(cloudflare.New())
