@@ -353,7 +353,7 @@ kubectl -n rotator run curl --rm -i --restart=Never --image=curlimages/curl -- \
 
 ### Exposing to the Akeyless Gateway
 
-The Akeyless Gateway must be able to reach the rotator over HTTP(S). The URL you give to the Web Target depends entirely on **where your gateway runs relative to the rotator**. Pick the scenario that matches your topology — this is the URL you will use for `<rotator-base-url>` in every later example.
+The Akeyless Gateway must be able to reach the rotator over HTTP(S). The URL you give to the Web Target depends entirely on **where your gateway runs relative to the rotator**. Pick the scenario that matches your topology. The URL you end up with is what you will use for `<rotator-base-url>` in every later example.
 
 The Web Target URL is always `<rotator-base-url>/sync/rotate`.
 
@@ -368,7 +368,7 @@ Web Target URL    = http://custom-producer.rotator.svc.cluster.local:8080/sync/r
 
 **Scenario B: Gateway runs outside the cluster (different cluster, VM, Akeyless SaaS gateway, Docker on another host)**
 
-The rotator must be reachable from where the gateway runs. Expose the rotator's `Service` with Ingress, LoadBalancer, or NodePort and use that publicly-reachable URL — TLS is strongly recommended.
+The rotator must be reachable from where the gateway runs. Expose the rotator's `Service` with Ingress, LoadBalancer, or NodePort and use that publicly-reachable URL. TLS is strongly recommended on anything traversing untrusted networks.
 
 NodePort example:
 
@@ -418,7 +418,7 @@ Web Target URL    = http://<docker-host>:8080/sync/rotate
 
 The gateway must be able to resolve and reach `<docker-host>` over the network. If both the gateway and the rotator run in the same Docker network, use the container name as the host (e.g., `http://custom-producer:8080`).
 
-> **Replace `<rotator-base-url>` everywhere below.** The remaining examples assume an in-cluster service URL for brevity, but every command works for any topology — just substitute your `<rotator-base-url>`.
+> **Replace `<rotator-base-url>` everywhere below.** The remaining examples assume an in-cluster service URL for brevity, but every command works for any topology. Just substitute your own `<rotator-base-url>`.
 
 ---
 
@@ -448,7 +448,7 @@ akeyless target create web \
 
 > **Note on `<port>`:** examples in this README use `8080`, the rotator's default `PORT`. If you override `PORT` in the deployment, use that value instead. The rotator must listen on a single port; the URL must reflect it.
 
-> **One Web Target, many rotated secrets.** A single Web Target works for every rotated secret you create with this rotator. The rotator inspects each request's `type` field to pick the correct handler — the Web Target itself is just the rotation endpoint. Create/revoke webhooks (rare for custom rotated secrets) require their own Web Targets pointing at `/sync/create` and `/sync/revoke` respectively.
+> **One Web Target, many rotated secrets.** A single Web Target works for every rotated secret you create with this rotator. The rotator inspects each request's `type` field to pick the correct handler. The Web Target itself is just the rotation endpoint. Create/revoke webhooks (rare for custom rotated secrets) require their own Web Targets pointing at `/sync/create` and `/sync/revoke` respectively.
 
 ### Step 2: Create a Rotated Secret
 
@@ -533,7 +533,7 @@ The deployment manifest references the GHCR image directly. See [Deploying to Ku
 
 ### 2. Verify the rotator is healthy
 
-`/health` is the only endpoint that does not require Akeyless auth — useful for k8s probes and connectivity checks.
+`/health` is the only endpoint that does not require Akeyless auth. Use it for k8s probes and connectivity checks.
 
 ```bash
 kubectl -n rotator run curl --rm -i --restart=Never --image=curlimages/curl -- \
@@ -586,7 +586,7 @@ akeyless create-rotated-secret \
   }'
 ```
 
-GitHub installation tokens auto-expire after ~1 hour — set `--rotation-interval 1` (one day) at the longest, or shorter for high-security setups.
+GitHub installation tokens auto-expire after ~1 hour. Set `--rotation-interval 1` (one day) at the longest, or shorter for high-security setups.
 
 ### 5. Trigger rotation and verify
 
@@ -856,7 +856,7 @@ Rotates an Ansible AWX/AAP personal access token using create-before-revoke.
 
 Mints GitHub App **installation access tokens** (the `ghs_...` short-lived tokens, ~1h lifetime). Each rotation generates a fresh JWT signed with the App's private key and exchanges it via `POST /app/installations/{installation_id}/access_tokens`.
 
-> GitHub does not expose any REST API for creating fine-grained or classic PATs — those can only be created interactively in the user's settings. Installation access tokens are the supported short-lived primitive and are what this rotator targets.
+> GitHub does not expose any REST API for creating fine-grained or classic PATs. Those can only be created interactively in the user's settings. Installation access tokens are the supported short-lived primitive and are what this rotator targets.
 
 Full setup (creating the App, obtaining the App ID, installation ID, and private key, scoping permissions): see [runbooks/github-app-token.md](runbooks/github-app-token.md).
 

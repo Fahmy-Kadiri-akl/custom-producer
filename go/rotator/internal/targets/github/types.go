@@ -22,7 +22,7 @@ type AppTokenPayload struct {
 	RepositoryIDs []int64           `json:"repository_ids,omitempty"`
 	Permissions   map[string]string `json:"permissions,omitempty"`
 
-	// Managed by the rotator — set by Rotate, do not populate at create time.
+	// Managed by the rotator. Set by Rotate; do not populate at create time.
 	Token     string `json:"token,omitempty"`
 	ExpiresAt string `json:"expires_at,omitempty"`
 }
