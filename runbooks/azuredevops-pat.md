@@ -1,10 +1,12 @@
-# Runbook: Azure DevOps Credential Rotation
+# Runbook: Azure DevOps PAT Rotation via Entra Refresh Token
 
-> **Rotators:** `pat` and `azuredevops_sp_token` in this repo. See the [main README](../README.md#pat-azure-devops) for where these fit.
-> **Scope:** Azure AD (Entra ID) app registration, OAuth 2.0 refresh-token bootstrap, Entra service principal client_credentials, and Akeyless Rotated Secret wiring. Covers two methods end to end.
-> **Status:** PAT method verified in production against the custom-producer rotator. SP-token method verified end to end.
-> **Estimated time:** ~15 minutes for initial PAT-method bootstrap; ~5 minutes for SP-token method; ~2 minutes to re-bootstrap a refresh token after expiry.
-> **Prerequisites:** Global Administrator (or Application Administrator + Cloud Application Administrator) on the Entra tenant; for the PAT method, Azure DevOps organization membership for the delegated user who will own the rotated PATs; `az` CLI signed in to the right tenant. The PAT-method device-code bootstrap runs from a local machine, a CI runner, a VM, or a separate Docker container, not from inside the rotator pod.
+> **Rotator:** `pat` (Azure DevOps) in this repo. See the [main README](../README.md#pat-azure-devops) for where this runbook fits.
+> **Scope:** Azure AD (Entra ID) app registration, OAuth 2.0 refresh-token bootstrap, and Akeyless Rotated Secret wiring. Covers PAT minting end to end.
+> **Status:** Verified in production against the custom-producer rotator.
+> **Estimated time:** ~15 minutes for initial bootstrap; ~2 minutes to re-bootstrap after RT expiry.
+> **Prerequisites:** Global Administrator (or Application Administrator + Cloud Application Administrator) on the Entra tenant; Azure DevOps organization membership for the delegated user who will own the rotated PATs; `az` CLI signed in to the right tenant. The device-code bootstrap runs from a local machine, a CI runner, a VM, or a separate Docker container, not from inside the rotator pod.
+
+> **Choosing a method.** The custom-producer also ships an `azuredevops_sp_token` rotator that produces ~1h AAD access tokens via Entra `client_credentials`. That rotator is non-interactive, has no helper binary, and has a separate runbook. Use this PAT runbook when consumers expect a long-lived ADO PAT or need to authenticate against the PATs Lifecycle API. Use [`azuredevops-sp-token.md`](azuredevops-sp-token.md) when consumers can refresh credentials hourly and you want a fully non-interactive setup.
 
 ---
 
@@ -25,28 +27,6 @@ The only supported automation path is:
 4. **Every exchange rolls the RT.** The response contains a new RT that must be persisted, replacing the old one.
 
 This runbook covers steps 1–4 in isolation, so the output (a working tenant_id + client_id + refresh_token triple) can be consumed by any downstream system.
-
----
-
-## Method comparison: which one to use
-
-This rotator supports two methods for producing an Azure DevOps credential. They produce different credentials with different strengths. Pick one before continuing.
-
-| | **`pat` (PAT method)** | **`azuredevops_sp_token` (SP method)** |
-|---|---|---|
-| What it produces | Azure DevOps **Personal Access Token** (`pat_...`-style, by default 30 days) | Azure AD **access token** for the ADO resource (`eyJ...` JWT, ~1 hour) |
-| Authenticates against | Anything that takes an ADO PAT, including the PATs Lifecycle API itself | Azure DevOps **REST API** and Git over HTTPS (used as the oauth2 password). **Does not** authenticate against the PATs Lifecycle API. |
-| Long-lived secret | Entra app registration, plus a delegated user's **refresh token** (lifespan up to 90 days, rolled on each rotation) | Entra app registration, plus a **client secret** on that registration |
-| Bootstrap step | Interactive: a delegated user signs in via OAuth device code once. Requires the helper binary in this repo. | Non-interactive: only Azure-side admin actions. No helper binary needed. |
-| Required Azure permission to mint | Delegated user must be a member of the target ADO organization with PAT-creation rights. | Service principal needs no ADO membership; the AAD access token is accepted by the ADO REST API as long as the org permits AAD authentication. |
-| Token lifetime | 1 to ~30 days, configurable via `valid_days` (max bounded by org's PAT policy) | ~60 minutes (`expires_in` from Entra), not configurable |
-| Active revoke of previous token | Yes (PAT API `DELETE`) | No (AAD access tokens cannot be revoked individually) |
-
-**Use the PAT method** when consumers expect a long-lived ADO PAT, when you need to authenticate against the PATs Lifecycle API itself, or when the consumer cannot perform an OAuth bearer-token exchange and needs a static-shaped credential.
-
-**Use the SP method** when consumers can refresh credentials hourly (most CI/CD), when you cannot or will not bootstrap a delegated user account, or when you want a non-interactive setup with no human in the loop.
-
-The two methods can coexist on the same rotator deployment with separate rotated secrets.
 
 ---
 
@@ -144,12 +124,12 @@ This runbook involves up to **three different people**. If you are handing off s
 | Role | Who / what permissions | Steps they perform |
 |---|---|---|
 | **A. Entra tenant admin** | Global Administrator, **or** Application Administrator + Cloud Application Administrator on the tenant. Can register apps and grant admin consent for delegated Microsoft Graph / Azure DevOps scopes. | 1a, 1b, 1c, 1d, 1e; Decommission steps 1–3 |
-| **B. Delegated user** | (PAT method only) Regular Entra user with membership in the target Azure DevOps organization and permission to create PATs (any org member by default, unless your org disabled "Allow users to create full-scoped PATs"). May be the same person as Role A or a different person. MFA is fine. | 2d (interactive browser sign-in only) |
+| **B. Delegated user** | Regular Entra user with membership in the target Azure DevOps organization and permission to create PATs (any org member by default, unless your org disabled "Allow users to create full-scoped PATs"). May be the same person as Role A or a different person. MFA is fine. | 2d (interactive browser sign-in only) |
 | **C. Automation operator / Akeyless admin** | Whoever owns the Akeyless account and the rotator deployment. Needs: admin access in Akeyless (to create/update Web Targets and Rotated Secrets), write access to the rotator deployment (to patch its env vars). Needs no Azure permissions. The bootstrap helper runs on Role C's own workstation, VM, or Docker host. | 2a, 2b, 2c, 2e, 2f, Step 4 (PAT), Step 5 (SP), Verification, ongoing operations |
 
 If Role A is not you: skip directly to [Step 1: Register the Entra app](#step-1-register-the-entra-app), copy the commands for steps 1a to 1e verbatim into a ticket or DM to your tenant admin, ask them to run the commands and return `APP_ID` and the tenant ID. Resume from Step 2.
 
-If Role B is not you (PAT method only): skip to [Step 2: Bootstrap the refresh token via device code](#step-2-bootstrap-the-refresh-token-via-device-code-pat-method-only), run 2c yourself, then send the stderr output (URL and user code) to the delegated user with the instructions in 2d. They sign in in their browser; you capture the output. The SP-token method has no Role B.
+If Role B is not you: skip to [Step 2: Bootstrap the refresh token via device code](#step-2-bootstrap-the-refresh-token-via-device-code), run 2c yourself, then send the stderr output (URL and user code) to the delegated user with the instructions in 2d. They sign in in their browser; you capture the output.
 
 ### Quick permission check (Role A)
 
@@ -280,7 +260,7 @@ ADO_ORG    = <your Azure DevOps org name>
 
 ---
 
-## Step 2: Bootstrap the refresh token via device code (PAT method only)
+## Step 2: Bootstrap the refresh token via device code
 
 > **👤 Performed by: Role C (automation operator) + Role B (delegated user)**
 > **Required permissions:**
@@ -288,7 +268,7 @@ ADO_ORG    = <your Azure DevOps org name>
 > - Role B needs to be an active Entra user in the same tenant and a member of the target Azure DevOps organization with PAT-creation rights. MFA is fine.
 > **If Role B isn't you:** after running the helper (2c), send the URL and user code printed on Role C's terminal to the delegated user with the instructions from 2d. Continue from 2e once the delegated user completes sign-in.
 
-This is the one interactive step in the PAT method. Skip this entire section if you are using the SP-token method.
+This is the one interactive step.
 
 ### 2a. Why the helper exists *(orientation)*
 
@@ -740,217 +720,6 @@ kubectl -n <rotator-namespace> logs deploy/rotator --tail=50
 
 ---
 
-## Step 5: SP-token method end to end
-
-> **👤 Performed by: Role A (Entra tenant admin) + Role C (automation operator)**
-> **Required permissions:** Role A: same as Step 1. Role C: same as Step 4.
-> **Skip this section** if you are using the PAT method.
-
-The SP-token method produces an **AAD access token** for the Azure DevOps resource by exchanging an Entra service principal's `client_credentials`. The minted token authenticates against the Azure DevOps REST API and against Git over HTTPS, but **not** against the PATs Lifecycle API. Token lifetime is ~1 hour, set by Entra and not configurable.
-
-This method has no interactive bootstrap, so the helper binary is not used.
-
-### 5a. Register the Entra app *(Role A)*
-
-The SP-token method needs an app registration with a **client secret**. You can either reuse the app from Step 1 (add a client secret to it) or create a fresh one. The two methods can share an app or use separate ones; separate apps are easier to audit independently.
-
-**Option 1: reuse the Step 1 app, append a client secret**
-
-`az ad app credential reset` **clears all existing passwords on the App by default**. You must pass `--append` if there are any other credentials on the App you want to keep. The Step 1 app is a public client used only for device-code flow and has no passwords by default, so a non-`--append` reset is harmless. If your Step 1 app already has other passwords (or you're not sure), use `--append`.
-
-```bash
-APP_ID=<the appId from Step 1b>
-
-az ad app credential reset \
-  --id "$APP_ID" \
-  --display-name "akeyless-sp-token-rotator" \
-  --years 2 \
-  --append \
-  --query '{clientId:appId, clientSecret:password}' -o json
-# capture clientSecret immediately; Azure does not show it again
-
-# expiry of the new credential is visible separately:
-az ad app credential list --id "$APP_ID" \
-  --query "[?displayName=='akeyless-sp-token-rotator'].{name:displayName, endDate:endDateTime}" -o table
-```
-
-**Option 2: create a fresh app**
-
-```bash
-ADO_RESOURCE_ID=499b84ac-1321-427f-aa17-267ca6975798
-
-# 5a.i: app
-SP_APP=$(az ad app create \
-  --display-name "ado-sp-token-rotator" \
-  --sign-in-audience AzureADMyOrg \
-  --required-resource-accesses "[{
-    \"resourceAppId\": \"$ADO_RESOURCE_ID\",
-    \"resourceAccess\": [
-      {\"id\": \"ee69721e-6c3a-468f-a9ec-302d16a4c599\", \"type\": \"Scope\"}
-    ]
-  }]" \
-  --query '{appId:appId, objectId:id}' -o json)
-SP_APP_ID=$(python3 -c "import json,sys;print(json.load(sys.stdin)['appId'])" <<< "$SP_APP")
-
-# 5a.ii: service principal
-az ad sp create --id "$SP_APP_ID" -o json --query '{spObjectId:id}'
-
-# 5a.iii: client secret (capture immediately, will not be shown again)
-# A fresh app has no existing credentials, so --append is unnecessary here.
-SECRET=$(az ad app credential reset \
-  --id "$SP_APP_ID" \
-  --display-name "akeyless-sp-token-rotator" \
-  --years 2 \
-  --query password -o tsv)
-echo "tenant_id:     $(az account show --query tenantId -o tsv)"
-echo "client_id:     $SP_APP_ID"
-echo "client_secret: $SECRET"
-
-# Newly-created secrets occasionally take 30 to 60 seconds to propagate
-# across Entra. If your first rotation returns AADSTS7000215, wait a
-# minute and retry; it usually clears on its own.
-```
-
-**You do not need admin consent or a `user_impersonation` grant for the SP-token method to obtain the AAD access token itself.** The `client_credentials` flow with `.default` scope returns a token regardless of consent state. Consent matters only if you call APIs that enforce delegated scope (the PATs Lifecycle API does, which is why SPs cannot mint PATs at all).
-
-### 5b. Authorize the SP in Azure DevOps *(Role A or ADO Project Collection Administrator)*
-
-For the AAD token to be accepted by the ADO REST API, the service principal must be added to the target ADO organization. Steps:
-
-1. In Azure DevOps, open `https://dev.azure.com/<org>/_settings/users`.
-2. Click **Add users**.
-3. Type the SP's display name (`ado-sp-token-rotator` or `pat-rotator`) and confirm it resolves.
-4. Set **Access level** to **Basic** (or whatever is appropriate for what consumers will do).
-5. Optionally add to specific projects.
-6. Click **Add**.
-
-> If the SP is not added here, every API call with the minted token will return HTTP 203 with the HTML sign-in page (the same failure mode described in *Failure mode you are avoiding*). The token is technically valid; ADO simply does not recognise the principal.
-
-### 5c. Smoke-test the SP credentials directly *(Role C)*
-
-Mint an access token by hand to confirm the triple is good before wiring Akeyless:
-
-```bash
-TENANT_ID=<your-tenant-id>
-CLIENT_ID=<sp client id from 5a>
-CLIENT_SECRET=<sp client secret from 5a>
-ADO_ORG=<your-org>
-
-RESP=$(curl -sS -X POST "https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  --data-urlencode "grant_type=client_credentials" \
-  --data-urlencode "client_id=${CLIENT_ID}" \
-  --data-urlencode "client_secret=${CLIENT_SECRET}" \
-  --data-urlencode "scope=499b84ac-1321-427f-aa17-267ca6975798/.default")
-
-echo "$RESP" | jq 'if .access_token then {ok:true, expires_in} else {ok:false, err:.error, msg:.error_description} end'
-# expected: {"ok":true, "expires_in":3599}
-
-ACCESS_TOKEN=$(echo "$RESP" | jq -r .access_token)
-
-# Confirm the token authenticates against ADO REST
-curl -sS -o /dev/null -w "ADO REST: HTTP %{http_code}\n" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  "https://dev.azure.com/${ADO_ORG}/_apis/projects?api-version=7.1-preview.4"
-# expected: HTTP 200
-```
-
-If the second call returns 203 with HTML, the SP is not in the ADO org yet. Go back to 5b.
-
-### 5d. Create the Web Target if you don't already have one *(Role C)*
-
-The SP-token method shares the same Web Target as the PAT method (and any other rotator type the unified container handles). If you ran Step 4c already, skip this. Otherwise:
-
-```bash
-$AKEYLESS target create web \
-  --name "/Targets/custom-producer" \
-  --url "<rotator-base-url>/sync/rotate" \
-  --profile admin
-```
-
-### 5e. Create the Rotated Secret *(Role C)*
-
-```bash
-$AKEYLESS create-rotated-secret \
-  --profile admin \
-  --name "/Rotated/azure-devops-sp-token" \
-  --target-name "/Targets/custom-producer" \
-  --rotator-type custom \
-  --auto-rotate true \
-  --rotation-interval 1 \
-  --custom-payload "{
-    \"type\": \"azuredevops_sp_token\",
-    \"tenant_id\": \"${TENANT_ID}\",
-    \"client_id\": \"${CLIENT_ID}\",
-    \"client_secret\": \"${CLIENT_SECRET}\",
-    \"organization\": \"${ADO_ORG}\"
-  }"
-# expected: A new rotated secret named /Rotated/azure-devops-sp-token was successfully created
-```
-
-The Akeyless minimum rotation interval is 1 day. AAD access tokens auto-expire in ~1 hour, so for any cadence longer than an hour the minted token will already be expired between rotations. Either accept that and have consumers handle 401 by triggering rotation themselves, or set the interval as short as Akeyless allows and let consumers re-read on every call.
-
-### 5f. First rotation and verify *(Role C)*
-
-```bash
-$AKEYLESS rotate-secret --profile admin --name "/Rotated/azure-devops-sp-token"
-# expected: ... was successfully rotated
-
-TOKEN=$($AKEYLESS get-rotated-secret-value --profile admin \
-  --name "/Rotated/azure-devops-sp-token" \
-  | jq -r '.value.payload | fromjson | .token')
-
-echo "${TOKEN:0:20}..."
-# expected: a JWT starting with eyJ
-
-curl -sS -o /dev/null -w "ADO REST via rotated token: HTTP %{http_code}\n" \
-  -H "Authorization: Bearer $TOKEN" \
-  "https://dev.azure.com/${ADO_ORG}/_apis/projects?api-version=7.1-preview.4"
-# expected: HTTP 200
-```
-
-If both calls succeed, the SP-token method works end to end.
-
-### 5g. Ongoing operations *(Role C)*
-
-```bash
-SECRET=/Rotated/azure-devops-sp-token
-
-# Manual rotation (smoke test or just-in-time mint for a sensitive job)
-$AKEYLESS rotate-secret --profile admin --name "$SECRET"
-
-# Read the current AAD access token (consumer workflow)
-$AKEYLESS get-rotated-secret-value --profile admin --name "$SECRET" \
-  | jq -r '.value.payload | fromjson | .token'
-
-# Status / last error
-$AKEYLESS describe-item --profile admin --name "$SECRET" \
-  | jq '{rotator_status, last_rotation_error}'
-
-# Rotate the SP's client secret in Azure first, then rebase the payload
-NEW_SECRET=$(az ad app credential reset --id "$CLIENT_ID" --years 2 --append --query password -o tsv)
-$AKEYLESS update-rotated-secret-val \
-  --profile admin --name "$SECRET" \
-  --new-custom-payload "{
-    \"type\": \"azuredevops_sp_token\",
-    \"tenant_id\": \"${TENANT_ID}\",
-    \"client_id\": \"${CLIENT_ID}\",
-    \"client_secret\": \"${NEW_SECRET}\",
-    \"organization\": \"${ADO_ORG}\"
-  }"
-$AKEYLESS rotate-secret --profile admin --name "$SECRET"
-```
-
-```bash
-# Tail rotator logs while triggering
-kubectl -n <rotator-namespace> logs deploy/custom-producer --tail=50
-# expected on success:
-#   dispatching request endpoint=rotate type=azuredevops_sp_token
-#   minted Azure DevOps SP access token tenant_id=... client_id=... expires_in=3599
-```
-
----
-
 ## Refresh-token lifecycle
 
 | Event | Effect on the RT |
@@ -970,20 +739,6 @@ kubectl -n <rotator-namespace> logs deploy/custom-producer --tail=50
 ### How to re-bootstrap
 
 Identical to Step 2. Run `get-refresh-token` with the same `TENANT_ID` and `CLIENT_ID`, sign in as the same delegated user (or a replacement), overwrite the stored RT. The app registration does not need to be recreated.
-
----
-
-## Client-secret lifecycle (SP method)
-
-| Event | Effect on the SP token rotation |
-|---|---|
-| Successful `client_credentials` exchange | New AAD access token returned. **No refresh-token rolling**, no payload state change other than the new `token` and `expires_at`. |
-| Client secret expires (configured at credential reset, default 1-2 years) | All exchanges fail with `AADSTS7000222: Invalid client secret` until you reset it and rebase the payload (Step 5g). |
-| Admin rotates the secret out of band | Same as expiry. Use the same rebase path. |
-| SP is removed from the ADO organization | Token mint succeeds, but every API call returns 203 + HTML sign-in page. Re-add per Step 5b. |
-| App registration is deleted | All client secrets invalidated. Re-create the app + SP per Step 5a. |
-
-**Monitoring recommendation:** alarm on `rotator_status: RotationFailed` for `/Rotated/azure-devops-sp-token`. Also track the SP's secret expiry date (returned at credential-reset time as `endDate`); alarm at 30 days remaining.
 
 ---
 
@@ -1104,29 +859,6 @@ The Akeyless gateway and the rotator are communicating at manual-trigger time bu
 - Gateway has enough memory. OOM kills reset the cached rotator target state.
 - The Rotated Secret's `timeout-sec` is high enough (40s recommended; defaults are often 20s which is too tight for RT exchange + PAT mint + PAT revoke).
 
-### SP-token method: `unauthorized_client: AADSTS7000215: Invalid client secret provided`
-
-The `client_secret` on the rotated-secret payload no longer matches the App registration. The most common causes:
-
-- The SP's secret was rotated out of band; the payload still has the old value. Run `az ad app credential reset --id $CLIENT_ID --years 2 --append --query password -o tsv` and use Step 5g to rebase.
-- The credential reset itself was less than ~60s ago and Entra has not finished propagating the new secret. Wait and retry.
-- The wrong `client_id` was supplied; the secret is for a different App.
-
-### SP-token method: `client_credentials` exchange returns 200 but ADO returns HTTP 203 with `<!DOCTYPE html ... Sign In ...`
-
-The SP authenticated successfully against Entra, but the Azure DevOps organization does not recognise it. Add the SP to the org per Step 5b. Until that is done, every consumer call fails with the HTML sign-in page (the same failure mode described in *Failure mode you are avoiding*).
-
-### SP-token method: rotator log shows `tenant_id is required` or `client_id is required`
-
-The `azuredevops_sp_token` payload is missing one of the three required fields (`tenant_id`, `client_id`, `client_secret`). Inspect with:
-
-```bash
-$AKEYLESS get-rotated-secret-value --profile admin --name "$SECRET" \
-  | jq -r '.value.payload | fromjson | {tenant_id, client_id, has_secret: (.client_secret|length>0)}'
-```
-
-Use Step 5g to rebase with a complete payload.
-
 ---
 
 ## Decommissioning
@@ -1228,34 +960,24 @@ $AKEYLESS describe-item --name "$SECRET_NAME" --profile admin
 # expected: Item not found
 ```
 
-### SP-token method (only the additions / differences from above)
-
-If the SP-token method shares the Step 1 app with the PAT method, D2 to D4 above already cover it. If the SP method uses a separate app (Step 5a Option 2), repeat D2 to D4 for that app's `APP_ID`.
-
-There are no outstanding tokens to revoke for the SP method. AAD access tokens cannot be revoked individually; they auto-expire within ~1 hour of issue. Once the rotated secret is deleted (D6) and the App / SP / client secret are gone, no new tokens can mint.
-
-To remove only the SP's authorisation in ADO without deleting the app, in `https://dev.azure.com/<org>/_settings/users`, find the SP's row and click **Delete user**. The SP can no longer call ADO REST endpoints, but its client_credentials still mints tokens against `499b84ac-.../.default` (those tokens just won't be accepted by ADO).
-
 ---
 
 ## Reference values
 
 All values below are tenant-agnostic and safe to hardcode.
 
-| Name | Value | Used by |
-|---|---|---|
-| Azure DevOps resource ID | `499b84ac-1321-427f-aa17-267ca6975798` | both methods |
-| Delegated scope (PAT method) | `user_impersonation` (scope ID `ee69721e-6c3a-468f-a9ec-302d16a4c599`) | PAT method |
-| Application (`.default`) scope | `499b84ac-1321-427f-aa17-267ca6975798/.default` | both methods |
-| Refresh-token scope override | `499b84ac-1321-427f-aa17-267ca6975798/.default offline_access` | PAT method (Step 2c) |
-| Token endpoint | `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token` | both methods |
-| Device code endpoint | `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/devicecode` | PAT method bootstrap |
-| PATs Lifecycle API | `https://vssps.dev.azure.com/{org}/_apis/tokens/pats?api-version=7.1-preview.1` | PAT method |
-| ADO REST API base | `https://dev.azure.com/{org}/_apis/` | SP method consumers |
-| Global admin Entra role ID | `62e90394-69f5-4237-9190-012177145e10` | both methods |
-| Application Administrator role ID | `9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3` | both methods |
-| Cloud Application Administrator role ID | `158c047a-c907-4556-b7ef-446551a6b5f7` | both methods |
-| Azure DevOps Services REST API version | `7.1-preview.1` (stable as of 2026-04) | both methods |
+| Name | Value |
+|---|---|
+| Azure DevOps resource ID | `499b84ac-1321-427f-aa17-267ca6975798` |
+| Delegated scope | `user_impersonation` (scope ID `ee69721e-6c3a-468f-a9ec-302d16a4c599`) |
+| Refresh-token scope | `499b84ac-1321-427f-aa17-267ca6975798/.default offline_access` |
+| Token endpoint | `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token` |
+| Device code endpoint | `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/devicecode` |
+| PATs Lifecycle API | `https://vssps.dev.azure.com/{org}/_apis/tokens/pats?api-version=7.1-preview.1` |
+| Global admin Entra role ID | `62e90394-69f5-4237-9190-012177145e10` |
+| Application Administrator role ID | `9b895d92-2cd3-44c7-9d02-a6ac2d5ea5c3` |
+| Cloud Application Administrator role ID | `158c047a-c907-4556-b7ef-446551a6b5f7` |
+| Azure DevOps Services REST API version | `7.1-preview.1` (stable as of 2026-04) |
 
 ---
 

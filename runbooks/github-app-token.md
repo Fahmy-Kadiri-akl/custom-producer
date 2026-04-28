@@ -856,4 +856,4 @@ All values below are GitHub-Cloud constants and safe to hardcode. Self-hosted Gi
 - GitHub REST API: [Apps endpoints](https://docs.github.com/en/rest/apps)
 - GitHub REST API: [Personal access tokens (organization)](https://docs.github.com/en/rest/orgs/personal-access-tokens). The endpoint that does **not** create PATs.
 - This repo: `go/rotator/internal/targets/github/` for the implementation.
-- Sibling runbook: [`azuredevops.md`](azuredevops.md), same shape applied to the ADO PAT and SP-token rotators.
+- Sibling runbook: [`azuredevops-pat.md`](azuredevops-pat.md), same shape applied to the ADO PAT rotator.
