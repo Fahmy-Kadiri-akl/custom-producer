@@ -107,7 +107,8 @@ The rotator uses a registry pattern internally. Each target implements a `Target
 | Service | Type | What It Rotates | Tested On |
 |---------|------|-----------------|-----------|
 | (test) | `echo` | Returns payload with `rotated_at` timestamp | Local |
-| Azure DevOps | [`pat`](runbooks/azuredevops-pat.md) | Personal access tokens via PAT Lifecycle API | Azure VM + Akeyless Gateway |
+| Azure DevOps | [`pat`](runbooks/azuredevops.md) | Personal access tokens via PAT Lifecycle API | Azure VM + Akeyless Gateway |
+| Azure DevOps | [`azuredevops_sp_token`](runbooks/azuredevops.md#step-5-sp-token-method-end-to-end) | AAD access tokens for the ADO REST API via Entra `client_credentials` | Akeyless lab tenant |
 | GitHub | [`github_app_token`](runbooks/github-app-token.md) | App installation access tokens via `/app/installations/{id}/access_tokens` | github.com (Fahmy-Kadiri-akl App) |
 | ArgoCD | `argocd_token` | Account tokens via ArgoCD API | Self-hosted ArgoCD |
 | GitLab | `gitlab_token` | Personal access tokens via Admin API | Self-hosted GitLab |
@@ -140,7 +141,7 @@ Per-rotator runbooks live under [`runbooks/`](runbooks/). Each covers the comple
 
 | Rotator | Runbook |
 |---|---|
-| `pat` (Azure DevOps) | [runbooks/azuredevops-pat.md](runbooks/azuredevops-pat.md) |
+| `pat` and `azuredevops_sp_token` (Azure DevOps) | [runbooks/azuredevops.md](runbooks/azuredevops.md) |
 | `github_app_token` | [runbooks/github-app-token.md](runbooks/github-app-token.md) |
 
 More runbooks will be added as each rotator is validated in production.
@@ -628,7 +629,7 @@ Microsoft restricts PAT minting to delegated user tokens only. Service principal
 
 Auth precedence: if `refresh_token` is set it is used; otherwise `bearer_token`; otherwise `username`/`password`.
 
-**Full setup:** see [runbooks/azuredevops-pat.md](runbooks/azuredevops-pat.md). Covers the Entra app registration, the device-code bootstrap helper, Akeyless Target + Rotated Secret creation, verification, troubleshooting, and decommissioning.
+**Full setup:** see [runbooks/azuredevops.md](runbooks/azuredevops.md). Covers the Entra app registration, the device-code bootstrap helper, Akeyless Target + Rotated Secret creation, verification, troubleshooting, and decommissioning.
 
 Example minimal payload for refresh-token mode:
 
@@ -659,6 +660,38 @@ Example minimal payload for refresh-token mode:
 | `bearer_token` | bearer | -- | Pre-obtained Azure AD access token (short-lived) |
 | `authorization_id` | Managed | -- | Current PAT authorization ID (set by rotator) |
 | `token` | Managed | -- | Current PAT value (set by rotator) |
+
+---
+
+### azuredevops_sp_token
+
+Mints **Azure AD access tokens** for the Azure DevOps resource via Entra `client_credentials`. Each rotation exchanges a service principal's `client_id` + `client_secret` for a fresh AAD bearer token (~1h lifetime) usable against the Azure DevOps REST API and against Git over HTTPS.
+
+> **This rotator does not produce Personal Access Tokens.** Microsoft blocks service principals from creating PATs. The minted token authenticates against the ADO REST API and Git endpoints, but **not** against the PATs Lifecycle API. Use the `pat` rotator above (with `refresh_token` auth) when consumers need an actual PAT.
+
+**Full setup:** see [Step 5 of runbooks/azuredevops.md](runbooks/azuredevops.md#step-5-sp-token-method-end-to-end). Covers app registration, granting the SP access in the ADO organization, payload assembly, and verification.
+
+```json
+{
+  "type": "azuredevops_sp_token",
+  "tenant_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "client_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "client_secret": "<from-az-ad-app-credential-reset>",
+  "organization": "<your-ado-org>"
+}
+```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `tenant_id` | Yes | -- | Entra tenant ID |
+| `client_id` | Yes | -- | Service principal's app ID |
+| `client_secret` | Yes | -- | Client secret on the App registration |
+| `scope` | No | `499b84ac-1321-427f-aa17-267ca6975798/.default` | OAuth scope. Override only to mint tokens for a non-ADO Azure resource. |
+| `organization` | No | -- | Documentation field; ADO org name the consumer talks to. The rotator does not use this. |
+| `token` | Managed | -- | Minted AAD access token (set by rotator) |
+| `expires_at` | Managed | -- | Token expiry timestamp (set by rotator) |
+
+The minted token's TTL is fixed at ~1 hour by Entra. Set `--rotation-interval 1` (the Akeyless minimum, one day) and have consumers re-read on 401, or trigger rotation just-in-time before each consumer call.
 
 ---
 
@@ -1389,7 +1422,7 @@ Used by most targets. Ensures zero downtime by creating a new credential before 
 4. Return updated payload with new token ID and value
 ```
 
-Targets: `pat`, `gitlab_token`, `api_key`, `cloudflare_token`, `github_app_token`, `jfrog_token`, `datadog_key`, `confluent_key`, `pagerduty_key`, `okta_key`, `sendgrid_key`, `newrelic_key`
+Targets: `pat`, `azuredevops_sp_token`, `gitlab_token`, `api_key`, `cloudflare_token`, `github_app_token`, `jfrog_token`, `datadog_key`, `confluent_key`, `pagerduty_key`, `okta_key`, `sendgrid_key`, `newrelic_key`
 
 ### Revoke-before-create
 
@@ -1428,7 +1461,7 @@ The `type` field in your payload does not match any registered target. Check the
 registered rotation targets  targets=["echo","password","api_key","pat",...]
 ```
 
-Valid type values: `echo`, `password`, `api_key`, `pat`, `github_app_token`, `gitlab_token`, `cloudflare_token`, `tfc_token`, `argocd_token`, `jfrog_token`, `datadog_key`, `grafana_token`, `pagerduty_key`, `newrelic_key`, `slack_token`, `sendgrid_key`, `confluent_key`, `servicenow_cred`, `okta_key`
+Valid type values: `echo`, `password`, `api_key`, `pat`, `azuredevops_sp_token`, `github_app_token`, `gitlab_token`, `cloudflare_token`, `tfc_token`, `argocd_token`, `jfrog_token`, `datadog_key`, `grafana_token`, `pagerduty_key`, `newrelic_key`, `slack_token`, `sendgrid_key`, `confluent_key`, `servicenow_cred`, `okta_key`
 
 ### Authentication fails with "missing AkeylessCreds header"
 
@@ -1463,7 +1496,7 @@ Grafana enforces unique token names per service account. The rotator handles thi
 
 ### Azure DevOps rotation issues
 
-All Azure DevOps auth and rotation failures are covered in the [Azure DevOps PAT runbook troubleshooting section](runbooks/azuredevops-pat.md#troubleshooting), including ROPC's `interaction_required` error, expired refresh tokens (`AADSTS70000`), the HTML-sign-in-page symptom of a dead bearer token, and the Akeyless-side errors (`401 invalid credentials`, `405 Method Not Allowed`, stale Web Target URLs).
+All Azure DevOps auth and rotation failures (both `pat` and `azuredevops_sp_token` methods) are covered in the [Azure DevOps runbook troubleshooting section](runbooks/azuredevops.md#troubleshooting), including ROPC's `interaction_required` error, expired refresh tokens (`AADSTS70000`), invalid client secret (`AADSTS7000215` / `AADSTS7000222`), the HTML-sign-in-page symptom of a dead bearer token or unauthorised SP, and the Akeyless-side errors (`401 invalid credentials`, `405 Method Not Allowed`, stale Web Target URLs).
 
 ### Container starts but no rotation happens
 
@@ -1588,7 +1621,7 @@ go/
         echo/target.go                  # Test/validation (no external deps)
         ansible/                        # AWX/AAP password + API key rotation
         argocd/                         # ArgoCD account token rotation
-        azuredevops/                    # Azure DevOps PAT rotation (see runbooks/azuredevops-pat.md)
+        azuredevops/                    # Azure DevOps PAT and SP-token rotation (see runbooks/azuredevops.md)
         cloudflare/                     # Cloudflare API token rotation
         confluent/                      # Confluent Cloud API key rotation
         datadog/                        # Datadog API + application key rotation

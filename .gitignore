@@ -16,5 +16,5 @@
 
 **/venv/**
 
-# Local test findings — never commit
-runbooks/github-pat-test-findings.md
+# Local test findings, never commit
+runbooks/*-test-findings.md
