@@ -3,7 +3,14 @@ package github
 import (
 	"bytes"
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,76 +19,144 @@ import (
 
 const apiBase = "https://api.github.com"
 
-type Client struct {
-	adminToken string
-	httpClient *http.Client
+// InstallationToken is the response from POST /app/installations/{id}/access_tokens.
+type InstallationToken struct {
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expires_at"`
 }
 
-type TokenResponse struct {
-	ID    int    `json:"id"`
-	Token string `json:"token"`
-}
+// MintInstallationToken mints a fresh installation access token by signing a
+// short-lived JWT with the App's private key, then exchanging it via the
+// /app/installations/{id}/access_tokens endpoint.
+//
+// repos/repoIDs/perms are forwarded to GitHub if non-empty to scope the token.
+func MintInstallationToken(
+	ctx context.Context,
+	appID, installationID int64,
+	privateKeyPEM string,
+	repos []string,
+	repoIDs []int64,
+	perms map[string]string,
+) (*InstallationToken, error) {
+	jwt, err := signAppJWT(appID, privateKeyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("sign app JWT: %w", err)
+	}
 
-func NewClient(adminToken string) *Client {
-	return &Client{adminToken: adminToken, httpClient: &http.Client{Timeout: 30 * time.Second}}
-}
-
-func (c *Client) do(ctx context.Context, method, path string, body interface{}) ([]byte, int, error) {
+	body := map[string]interface{}{}
+	if len(repos) > 0 {
+		body["repositories"] = repos
+	}
+	if len(repoIDs) > 0 {
+		body["repository_ids"] = repoIDs
+	}
+	if len(perms) > 0 {
+		body["permissions"] = perms
+	}
 	var reqBody io.Reader
-	if body != nil {
+	if len(body) > 0 {
 		bs, _ := json.Marshal(body)
 		reqBody = bytes.NewReader(bs)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, apiBase+path, reqBody)
-	if err != nil {
-		return nil, 0, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.adminToken)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	respBody, _ := io.ReadAll(resp.Body)
-	return respBody, resp.StatusCode, nil
-}
 
-// CreateFineGrainedPAT creates a new fine-grained PAT via the org API.
-func (c *Client) CreateFineGrainedPAT(ctx context.Context, owner, tokenName string, repos []string, permissions map[string]string, expiryDays int) (*TokenResponse, error) {
-	expiry := time.Now().UTC().Add(time.Duration(expiryDays) * 24 * time.Hour).Format(time.RFC3339)
-	payload := map[string]interface{}{
-		"name":         tokenName,
-		"repositories": repos,
-		"permissions":  permissions,
-		"expires_at":   expiry,
-	}
-	body, status, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/orgs/%s/personal-access-tokens", owner), payload)
+	url := fmt.Sprintf("%s/app/installations/%d/access_tokens", apiBase, installationID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, reqBody)
 	if err != nil {
 		return nil, err
 	}
-	if status != http.StatusOK && status != http.StatusCreated {
-		return nil, fmt.Errorf("create PAT (HTTP %d): %s", status, string(body))
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	if reqBody != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
-	var token TokenResponse
-	if err := json.Unmarshal(body, &token); err != nil {
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	respBody, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("mint installation token (HTTP %d): %s", resp.StatusCode, string(respBody))
+	}
+	var tok InstallationToken
+	if err := json.Unmarshal(respBody, &tok); err != nil {
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
-	return &token, nil
+	if tok.Token == "" {
+		return nil, fmt.Errorf("empty token in response: %s", string(respBody))
+	}
+	return &tok, nil
 }
 
-// RevokeFineGrainedPAT revokes a fine-grained PAT by ID.
-func (c *Client) RevokeFineGrainedPAT(ctx context.Context, owner string, tokenID int) error {
-	body, status, err := c.do(ctx, http.MethodDelete, fmt.Sprintf("/orgs/%s/personal-access-tokens/%d", owner, tokenID), nil)
+// RevokeInstallationToken invalidates a still-active installation access
+// token before its natural expiry. Best-effort; GitHub auto-expires tokens
+// after ~1h regardless.
+func RevokeInstallationToken(ctx context.Context, token string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, apiBase+"/installation/token", nil)
 	if err != nil {
 		return err
 	}
-	if status != http.StatusNoContent && status != http.StatusOK && status != http.StatusAccepted {
-		return fmt.Errorf("revoke PAT (HTTP %d): %s", status, string(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("revoke installation token (HTTP %d): %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+// signAppJWT builds an RS256-signed JWT suitable for authenticating as a
+// GitHub App. iat is set 30s in the past to tolerate small clock skew; exp
+// is 9 minutes in the future (GitHub's max is 10).
+func signAppJWT(appID int64, privateKeyPEM string) (string, error) {
+	key, err := parseRSAPrivateKey(privateKeyPEM)
+	if err != nil {
+		return "", err
+	}
+	now := time.Now()
+	headerJSON, _ := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT"})
+	claimsJSON, _ := json.Marshal(map[string]interface{}{
+		"iat": now.Add(-30 * time.Second).Unix(),
+		"exp": now.Add(9 * time.Minute).Unix(),
+		"iss": appID,
+	})
+	enc := base64.RawURLEncoding
+	signingInput := enc.EncodeToString(headerJSON) + "." + enc.EncodeToString(claimsJSON)
+	digest := sha256.Sum256([]byte(signingInput))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
+	if err != nil {
+		return "", fmt.Errorf("rsa sign: %w", err)
+	}
+	return signingInput + "." + enc.EncodeToString(signature), nil
+}
+
+func parseRSAPrivateKey(pemStr string) (*rsa.PrivateKey, error) {
+	block, _ := pem.Decode([]byte(pemStr))
+	if block == nil {
+		return nil, fmt.Errorf("private_key is not valid PEM")
+	}
+	if k, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return k, nil
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse private key (tried PKCS#1 and PKCS#8): %w", err)
+	}
+	rsaKey, ok := parsed.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("private key is not RSA")
+	}
+	return rsaKey, nil
 }

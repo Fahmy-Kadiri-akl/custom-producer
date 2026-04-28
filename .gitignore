@@ -15,3 +15,6 @@
 # vendor/
 
 **/venv/**
+
+# Local test findings — never commit
+runbooks/github-pat-test-findings.md

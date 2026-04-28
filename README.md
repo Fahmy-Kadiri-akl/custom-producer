@@ -86,7 +86,7 @@ flowchart TB
 
 ### Rotation Flow (step by step)
 
-1. An operator creates a **Web Target** in Akeyless pointing to the rotator's URL (e.g., `http://custom-producer.rotator.svc.cluster.local:<port>`, where `<port>` is whatever you set via the `PORT` environment variable -- default `8080`).
+1. An operator creates a **Web Target** in Akeyless pointing to the rotator's `/sync/rotate` URL (e.g., `http://custom-producer.rotator.svc.cluster.local:8080/sync/rotate` for an in-cluster rotator on the default port; see [Exposing to the Akeyless Gateway](#exposing-to-the-akeyless-gateway) for non-cluster topologies).
 2. The operator creates a **Rotated Secret** using that Web Target, with a JSON payload containing a `type` field and all the service-specific configuration (admin credentials, token names, scopes, etc.).
 3. When the rotation interval fires (or the operator triggers it manually), the Akeyless Gateway sends `POST /sync/rotate` to the rotator with the payload.
 4. The rotator parses the `type` field (e.g., `"gitlab_token"`), looks up the matching handler in its internal registry, and calls it.
@@ -108,6 +108,7 @@ The rotator uses a registry pattern internally. Each target implements a `Target
 |------|---------|-----------------|-----------|
 | `echo` | (test) | Returns payload with `rotated_at` timestamp | Local |
 | [`pat`](runbooks/azuredevops-pat.md) | Azure DevOps | Personal access tokens via PAT Lifecycle API | Azure VM + Akeyless Gateway |
+| [`github_app_token`](runbooks/github-app-token.md) | GitHub | App installation access tokens via `/app/installations/{id}/access_tokens` | github.com (Fahmy-Kadiri-akl App) |
 | `argocd_token` | ArgoCD | Account tokens via ArgoCD API | Self-hosted ArgoCD |
 | `gitlab_token` | GitLab | Personal access tokens via Admin API | Self-hosted GitLab |
 | `grafana_token` | Grafana | Service account tokens via Grafana API | Grafana Cloud |
@@ -121,7 +122,6 @@ These targets are implemented and compile but have not been validated against a 
 |------|---------|-----------------|------------|
 | `password` | Ansible AWX/AAP | User passwords | Requires AWX/AAP instance |
 | `api_key` | Ansible AWX/AAP | Personal access tokens | Requires AWX/AAP instance |
-| `github_pat` | GitHub | Fine-grained personal access tokens | github.com (requires GitHub App) |
 | `jfrog_token` | JFrog Artifactory | Access tokens | jfrog.com/start-free |
 | `datadog_key` | Datadog | API keys and application keys | datadoghq.com/free-datadog-trial |
 | `tfc_token` | Terraform Cloud | Team/org API tokens | app.terraform.io/signup |
@@ -141,6 +141,7 @@ Per-rotator runbooks live under [`runbooks/`](runbooks/). Each covers the comple
 | Rotator | Runbook |
 |---|---|
 | `pat` (Azure DevOps) | [runbooks/azuredevops-pat.md](runbooks/azuredevops-pat.md) |
+| `github_app_token` | [runbooks/github-app-token.md](runbooks/github-app-token.md) |
 
 More runbooks will be added as each rotator is validated in production.
 
@@ -273,14 +274,26 @@ spec:
         - containerPort: 8080          # Must match PORT env var
           name: http
         env:
+        # REQUIRED. The Akeyless Gateway's access_id. Without this set
+        # correctly, every gateway call is rejected with "invalid credentials".
+        # Find it on the gateway you intend to use:
+        #   kubectl -n <gateway-ns> get secret akeyless-gateway-conf-secret \
+        #     -o jsonpath='{.data.gateway-access-id}' | base64 -d
+        # Or pull it from the gateway's UI at Settings > Cluster Settings.
         - name: AKEYLESS_ACCESS_ID
-          value: "p-1234567890ab"
-        # Optional: override the default listen port (8080)
+          value: "p-REPLACE-ME"
+        # Optional: override the default listen port (8080).
+        # If you change this, also update the containerPort, probes, and
+        # the Service's port/targetPort below.
         # - name: PORT
         #   value: "9090"
-        # Optional: restrict to a specific rotated secret name
+        # Optional: restrict to a specific rotated secret name. When set,
+        # only that rotated secret may invoke this rotator.
         # - name: AKEYLESS_ITEM_NAME
         #   value: "/Rotated/my-secret"
+        # DEV ONLY: bypass Akeyless JWT validation. Never set in production.
+        # - name: SKIP_AUTH
+        #   value: "true"
         resources:
           requests:
             cpu: 50m
@@ -333,25 +346,31 @@ kubectl -n rotator logs deployment/custom-producer
 Test from inside the cluster:
 
 ```bash
-kubectl -n rotator run curl --rm -it --image=curlimages/curl -- \
-  curl -s http://custom-producer.rotator.svc.cluster.local:<port>/health
+kubectl -n rotator run curl --rm -i --restart=Never --image=curlimages/curl -- \
+  curl -s http://custom-producer.rotator.svc.cluster.local:8080/health
+# {"status":"healthy"}
 ```
 
 ### Exposing to the Akeyless Gateway
 
-The Akeyless Gateway must be able to reach the rotator's service URL. There are three scenarios:
+The Akeyless Gateway must be able to reach the rotator over HTTP(S). The URL you give to the Web Target depends entirely on **where your gateway runs relative to the rotator**. Pick the scenario that matches your topology — this is the URL you will use for `<rotator-base-url>` in every later example.
 
-**Scenario A: Gateway and rotator in the same cluster**
+The Web Target URL is always `<rotator-base-url>/sync/rotate`.
 
-Use the Kubernetes service DNS name directly:
+**Scenario A: Gateway and rotator in the same Kubernetes cluster (any namespaces)**
+
+Use the rotator's in-cluster service DNS name. Cross-namespace DNS works out of the box.
 
 ```
-http://custom-producer.rotator.svc.cluster.local:<port>
+<rotator-base-url> = http://custom-producer.rotator.svc.cluster.local:8080
+Web Target URL    = http://custom-producer.rotator.svc.cluster.local:8080/sync/rotate
 ```
 
-**Scenario B: Gateway is external (Docker, VM, Cloud)**
+**Scenario B: Gateway runs outside the cluster (different cluster, VM, Akeyless SaaS gateway, Docker on another host)**
 
-Expose the service via Ingress, LoadBalancer, or NodePort:
+The rotator must be reachable from where the gateway runs. Expose the rotator's `Service` with Ingress, LoadBalancer, or NodePort and use that publicly-reachable URL — TLS is strongly recommended.
+
+NodePort example:
 
 ```yaml
 apiVersion: v1
@@ -363,23 +382,43 @@ spec:
   selector:
     app: custom-producer
   ports:
-  - port: <port>                       # Must match PORT env var
-    targetPort: <port>                 # Must match PORT env var
-    nodePort: 30080                    # Choose any available NodePort (30000-32767)
+  - port: 8080
+    targetPort: 8080
+    nodePort: 30080  # any free port in 30000-32767
   type: NodePort
 ```
 
-Then the URL becomes `http://<node-ip>:30080`.
-
-**Scenario C: Same node, different namespace**
-
-If your Akeyless Gateway runs in a different namespace on the same cluster:
-
 ```
-http://custom-producer.rotator.svc.cluster.local:<port>
+<rotator-base-url> = http://<node-or-lb-ip>:30080
+Web Target URL    = http://<node-or-lb-ip>:30080/sync/rotate
 ```
 
-Cross-namespace DNS resolution works out of the box in Kubernetes.
+For an Ingress with TLS:
+
+```
+<rotator-base-url> = https://rotator.example.com
+Web Target URL    = https://rotator.example.com/sync/rotate
+```
+
+**Scenario C: Rotator running as a standalone Docker container (no Kubernetes)**
+
+Run the container with a port published to the host (or to a routable network), and use that host:port in the URL.
+
+```bash
+docker run -d --name custom-producer \
+  -p 8080:8080 \
+  -e AKEYLESS_ACCESS_ID=p-XXXXXXXXXXXXXXXX \
+  ghcr.io/fahmy-kadiri-akl/custom-producer/rotator:latest
+```
+
+```
+<rotator-base-url> = http://<docker-host>:8080
+Web Target URL    = http://<docker-host>:8080/sync/rotate
+```
+
+The gateway must be able to resolve and reach `<docker-host>` over the network. If both the gateway and the rotator run in the same Docker network, use the container name as the host (e.g., `http://custom-producer:8080`).
+
+> **Replace `<rotator-base-url>` everywhere below.** The remaining examples assume an in-cluster service URL for brevity, but every command works for any topology — just substitute your `<rotator-base-url>`.
 
 ---
 
@@ -389,23 +428,27 @@ This section walks through creating the Web Target and Rotated Secret in Akeyles
 
 ### Step 1: Create a Web Target
 
+The Akeyless Gateway calls the URL on the Web Target verbatim, so the URL **must point at a specific endpoint** on the rotator. For rotated secrets, that endpoint is `/sync/rotate`.
+
 In the Akeyless Console:
 
 1. Navigate to **Targets > New > Web Target**
 2. Configure:
    - **Name:** `/Targets/custom-producer` (or any path you prefer)
-   - **URL:** `http://custom-producer.rotator.svc.cluster.local:<port>` (your rotator's URL)
+   - **URL:** `http://custom-producer.rotator.svc.cluster.local:8080/sync/rotate`
    - Leave all other fields as defaults
 
 Using the CLI:
 
 ```bash
-akeyless create-web-target \
+akeyless target create web \
   --name "/Targets/custom-producer" \
-  --url "http://custom-producer.rotator.svc.cluster.local:<port>"
+  --url "http://custom-producer.rotator.svc.cluster.local:8080/sync/rotate"
 ```
 
-You only need **one Web Target** for all rotation types. Every rotated secret shares this target.
+> **Note on `<port>`:** examples in this README use `8080`, the rotator's default `PORT`. If you override `PORT` in the deployment, use that value instead. The rotator must listen on a single port; the URL must reflect it.
+
+> **One Web Target, many rotated secrets.** A single Web Target works for every rotated secret you create with this rotator. The rotator inspects each request's `type` field to pick the correct handler — the Web Target itself is just the rotation endpoint. Create/revoke webhooks (rare for custom rotated secrets) require their own Web Targets pointing at `/sync/create` and `/sync/revoke` respectively.
 
 ### Step 2: Create a Rotated Secret
 
@@ -490,59 +533,69 @@ The deployment manifest references the GHCR image directly. See [Deploying to Ku
 
 ### 2. Verify the rotator is healthy
 
+`/health` is the only endpoint that does not require Akeyless auth — useful for k8s probes and connectivity checks.
+
 ```bash
-curl -s http://<rotator-url>:<port>/health
+kubectl -n rotator run curl --rm -i --restart=Never --image=curlimages/curl -- \
+  curl -s http://custom-producer.rotator.svc.cluster.local:8080/health
 # {"status":"healthy"}
 ```
 
-### 3. Test locally with SKIP_AUTH
+### 3. (Optional) Smoke-test the rotation handler locally
+
+`/sync/rotate` requires a valid `AkeylessCreds` JWT in production. To smoke-test against the echo target without a gateway, temporarily enable `SKIP_AUTH=true` on the deployment:
 
 ```bash
-curl -s -X POST http://<rotator-url>:<port>/sync/rotate \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "payload": "{\"type\":\"gitlab_token\",\"base_url\":\"https://gitlab.example.com\",\"admin_token\":\"glpat-XXXXXXXXXXXXXXXXXXXX\",\"user_id\":2,\"token_name\":\"akeyless-managed\",\"scopes\":[\"api\"],\"expiry_days\":30,\"token_id\":0,\"token\":\"\"}"
-  }'
-```
+# Enable bypass
+kubectl -n rotator set env deployment/custom-producer SKIP_AUTH=true
+kubectl -n rotator rollout status deployment/custom-producer
 
-If this is the first rotation (`token_id: 0`, `token: ""`), the rotator creates a new PAT and returns the updated payload with the `token_id` and `token` fields populated.
+# Smoke test (echo)
+kubectl -n rotator run curl --rm -i --restart=Never --image=curlimages/curl -- \
+  curl -s -X POST http://custom-producer.rotator.svc.cluster.local:8080/sync/rotate \
+    -H 'Content-Type: application/json' \
+    -d '{"payload":"{\"type\":\"echo\",\"hello\":\"world\"}"}'
+
+# IMPORTANT: turn auth back on before you create any real rotated secret
+kubectl -n rotator set env deployment/custom-producer SKIP_AUTH-
+kubectl -n rotator rollout status deployment/custom-producer
+```
 
 ### 4. Create the Akeyless resources
 
 ```bash
 # Web Target (skip if already created)
-akeyless create-web-target \
+akeyless target create web \
   --name "/Targets/custom-producer" \
-  --url "http://custom-producer.rotator.svc.cluster.local:<port>"
+  --url "http://custom-producer.rotator.svc.cluster.local:8080/sync/rotate"
 
-# Rotated Secret
+# Rotated Secret (example for github_app_token)
 akeyless create-rotated-secret \
-  --name "/Rotated/gitlab-deploy-token" \
+  --name "/Rotated/github-app-token" \
   --target-name "/Targets/custom-producer" \
   --rotator-type "custom" \
   --auto-rotate true \
-  --rotation-interval 30 \
+  --rotation-interval 1 \
   --custom-payload '{
-    "type": "gitlab_token",
-    "base_url": "https://gitlab.example.com",
-    "admin_token": "glpat-XXXXXXXXXXXXXXXXXXXX",
-    "user_id": 2,
-    "token_name": "akeyless-managed",
-    "scopes": ["api", "read_repository"],
-    "expiry_days": 30,
-    "token_id": 0,
-    "token": ""
+    "type": "github_app_token",
+    "app_id": 1234567,
+    "installation_id": 87654321,
+    "private_key": "-----BEGIN RSA PRIVATE KEY-----\n...PEM with literal \\n line breaks...\n-----END RSA PRIVATE KEY-----\n",
+    "repositories": ["my-repo"],
+    "permissions": {"contents": "read", "metadata": "read"}
   }'
 ```
+
+GitHub installation tokens auto-expire after ~1 hour — set `--rotation-interval 1` (one day) at the longest, or shorter for high-security setups.
 
 ### 5. Trigger rotation and verify
 
 ```bash
-akeyless rotate-secret --name "/Rotated/gitlab-deploy-token"
-akeyless get-rotated-secret-value --name "/Rotated/gitlab-deploy-token"
+akeyless rotate-secret --name "/Rotated/github-app-token"
+akeyless get-rotated-secret-value --name "/Rotated/github-app-token"
 ```
 
-The payload now contains a valid `token` and `token_id`. On the next rotation, the rotator creates a new token, then revokes the old one (create-before-revoke pattern).
+The payload now contains a fresh `token` (`ghs_...`) and `expires_at`. On every rotation the rotator mints a new installation token and best-effort revokes the previous one.
 
 ---
 
@@ -799,40 +852,40 @@ Rotates an Ansible AWX/AAP personal access token using create-before-revoke.
 
 ---
 
-### github_pat
+### github_app_token
 
-Rotates GitHub fine-grained personal access tokens.
+Mints GitHub App **installation access tokens** (the `ghs_...` short-lived tokens, ~1h lifetime). Each rotation generates a fresh JWT signed with the App's private key and exchanges it via `POST /app/installations/{installation_id}/access_tokens`.
 
-**Important:** GitHub's PAT creation API requires authentication via a GitHub App or a classic PAT with `admin:org` scope. Fine-grained PATs cannot create other fine-grained PATs.
+> GitHub does not expose any REST API for creating fine-grained or classic PATs — those can only be created interactively in the user's settings. Installation access tokens are the supported short-lived primitive and are what this rotator targets.
+
+Full setup (creating the App, obtaining the App ID, installation ID, and private key, scoping permissions): see [runbooks/github-app-token.md](runbooks/github-app-token.md).
 
 ```json
 {
-  "type": "github_pat",
-  "admin_token": "ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
-  "owner": "my-org",
-  "token_name": "akeyless-managed-deploy",
-  "repositories": ["repo-a", "repo-b"],
+  "type": "github_app_token",
+  "app_id": 1234567,
+  "installation_id": 87654321,
+  "private_key": "-----BEGIN RSA PRIVATE KEY-----\n...PEM body with literal \\n line breaks...\n-----END RSA PRIVATE KEY-----\n",
+  "repositories": ["my-repo"],
   "permissions": {
     "contents": "read",
-    "pull_requests": "write",
     "metadata": "read"
-  },
-  "expiry_days": 30,
-  "token_id": 0,
-  "token": ""
+  }
 }
 ```
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `admin_token` | Yes | -- | Classic PAT with `admin:org` or GitHub App token |
-| `owner` | Yes | -- | Organization or user that owns the tokens |
-| `token_name` | Yes | -- | Display name for the token |
-| `repositories` | No | -- | Repository names to scope the token to |
-| `permissions` | No | -- | Map of permission names to access levels |
-| `expiry_days` | No | `30` | Token TTL in days |
-| `token_id` | Managed | -- | Current fine-grained PAT ID |
-| `token` | Managed | -- | Current token value |
+| `app_id` | Yes | -- | Numeric GitHub App ID (from the App's settings page) |
+| `installation_id` | Yes | -- | Numeric installation ID for the user/org where the App is installed |
+| `private_key` | Yes | -- | PEM-encoded RSA private key (PKCS#1 or PKCS#8). JSON-escape newlines as `\n` |
+| `repositories` | No | (all installed repos) | Repository names to scope the token to |
+| `repository_ids` | No | (all installed repos) | Repository IDs to scope the token to |
+| `permissions` | No | (App's full installed perms) | Subset of the App's permissions to grant the minted token |
+| `token` | Managed | -- | The minted `ghs_...` token (set by rotator) |
+| `expires_at` | Managed | -- | Token expiry timestamp (set by rotator) |
+
+Tokens auto-expire in ~1 hour, so set `--rotation-interval 1` (one day, the Akeyless minimum) at the longest. For high-security use cases, retrieve a fresh token on every consumer call by triggering rotation just-in-time.
 
 ---
 
@@ -1334,7 +1387,7 @@ Used by most targets. Ensures zero downtime by creating a new credential before 
 4. Return updated payload with new token ID and value
 ```
 
-Targets: `pat`, `gitlab_token`, `api_key`, `cloudflare_token`, `github_pat`, `jfrog_token`, `datadog_key`, `confluent_key`, `pagerduty_key`, `okta_key`, `sendgrid_key`, `newrelic_key`
+Targets: `pat`, `gitlab_token`, `api_key`, `cloudflare_token`, `github_app_token`, `jfrog_token`, `datadog_key`, `confluent_key`, `pagerduty_key`, `okta_key`, `sendgrid_key`, `newrelic_key`
 
 ### Revoke-before-create
 
@@ -1373,7 +1426,7 @@ The `type` field in your payload does not match any registered target. Check the
 registered rotation targets  targets=["echo","password","api_key","pat",...]
 ```
 
-Valid type values: `echo`, `password`, `api_key`, `pat`, `github_pat`, `gitlab_token`, `cloudflare_token`, `tfc_token`, `argocd_token`, `jfrog_token`, `datadog_key`, `grafana_token`, `pagerduty_key`, `newrelic_key`, `slack_token`, `sendgrid_key`, `confluent_key`, `servicenow_cred`, `okta_key`
+Valid type values: `echo`, `password`, `api_key`, `pat`, `github_app_token`, `gitlab_token`, `cloudflare_token`, `tfc_token`, `argocd_token`, `jfrog_token`, `datadog_key`, `grafana_token`, `pagerduty_key`, `newrelic_key`, `slack_token`, `sendgrid_key`, `confluent_key`, `servicenow_cred`, `okta_key`
 
 ### Authentication fails with "missing AkeylessCreds header"
 

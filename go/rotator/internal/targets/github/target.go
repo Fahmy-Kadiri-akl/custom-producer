@@ -12,45 +12,71 @@ import (
 type Target struct{}
 
 func New() *Target             { return &Target{} }
-func (t *Target) Type() string { return "github_pat" }
+func (t *Target) Type() string { return "github_app_token" }
 
 func (t *Target) Create(_ context.Context, req *types.CreateRequest) (*types.CreateResponse, error) {
-	var p PATPayload
+	var p AppTokenPayload
 	if err := json.Unmarshal([]byte(req.Payload), &p); err != nil {
 		return nil, fmt.Errorf("parse payload: %w", err)
 	}
-	resp, _ := json.Marshal(map[string]interface{}{"token": p.Token, "token_id": p.TokenID})
-	return &types.CreateResponse{ID: fmt.Sprintf("%d", p.TokenID), Response: string(resp)}, nil
+	resp, _ := json.Marshal(map[string]interface{}{
+		"token":      p.Token,
+		"expires_at": p.ExpiresAt,
+	})
+	return &types.CreateResponse{
+		ID:       fmt.Sprintf("github-app-%d-installation-%d", p.AppID, p.InstallationID),
+		Response: string(resp),
+	}, nil
 }
 
-func (t *Target) Revoke(_ context.Context, req *types.RevokeRequest) (*types.RevokeResponse, error) {
+func (t *Target) Revoke(ctx context.Context, req *types.RevokeRequest) (*types.RevokeResponse, error) {
+	var p AppTokenPayload
+	if err := json.Unmarshal([]byte(req.Payload), &p); err != nil {
+		return &types.RevokeResponse{Revoked: req.IDs, Message: "acknowledged (payload not parseable)"}, nil
+	}
+	if p.Token != "" {
+		if err := RevokeInstallationToken(ctx, p.Token); err != nil {
+			log.Warn().Err(err).Msg("failed to revoke installation token; will auto-expire")
+		}
+	}
 	return &types.RevokeResponse{Revoked: req.IDs, Message: "acknowledged"}, nil
 }
 
 func (t *Target) Rotate(ctx context.Context, req *types.RotateRequest) (*types.RotateResponse, error) {
-	var p PATPayload
+	var p AppTokenPayload
 	if err := json.Unmarshal([]byte(req.Payload), &p); err != nil {
 		return nil, fmt.Errorf("parse payload: %w", err)
 	}
-	client := NewClient(p.AdminToken)
-	days := p.ExpiryDays
-	if days <= 0 {
-		days = 30
+	if p.AppID == 0 {
+		return nil, fmt.Errorf("app_id is required")
 	}
-	newToken, err := client.CreateFineGrainedPAT(ctx, p.Owner, p.TokenName, p.Repositories, p.Permissions, days)
+	if p.InstallationID == 0 {
+		return nil, fmt.Errorf("installation_id is required")
+	}
+	if p.PrivateKey == "" {
+		return nil, fmt.Errorf("private_key is required")
+	}
+
+	tok, err := MintInstallationToken(ctx, p.AppID, p.InstallationID, p.PrivateKey, p.Repositories, p.RepositoryIDs, p.Permissions)
 	if err != nil {
-		return nil, fmt.Errorf("create PAT: %w", err)
+		return nil, fmt.Errorf("mint installation token: %w", err)
 	}
-	log.Info().Int("new_id", newToken.ID).Str("owner", p.Owner).Msg("new GitHub PAT created")
-	if p.TokenID > 0 {
-		if err := client.RevokeFineGrainedPAT(ctx, p.Owner, p.TokenID); err != nil {
-			log.Warn().Err(err).Int("old_id", p.TokenID).Msg("failed to revoke old GitHub PAT")
-		} else {
-			log.Info().Int("old_id", p.TokenID).Msg("old GitHub PAT revoked")
+	log.Info().
+		Int64("app_id", p.AppID).
+		Int64("installation_id", p.InstallationID).
+		Str("expires_at", tok.ExpiresAt).
+		Msg("minted GitHub App installation token")
+
+	// Best-effort revoke of the previous token. New token is already active,
+	// so even if revoke fails the rotation is successful.
+	if p.Token != "" {
+		if err := RevokeInstallationToken(ctx, p.Token); err != nil {
+			log.Warn().Err(err).Msg("failed to revoke previous installation token; will auto-expire")
 		}
 	}
-	p.TokenID = newToken.ID
-	p.Token = newToken.Token
+
+	p.Token = tok.Token
+	p.ExpiresAt = tok.ExpiresAt
 	out, _ := json.Marshal(p)
 	return &types.RotateResponse{Payload: string(out)}, nil
 }
