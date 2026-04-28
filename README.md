@@ -104,35 +104,35 @@ The rotator uses a registry pattern internally. Each target implements a `Target
 
 ### Tested and Validated
 
-| Type | Service | What It Rotates | Tested On |
-|------|---------|-----------------|-----------|
-| `echo` | (test) | Returns payload with `rotated_at` timestamp | Local |
-| [`pat`](runbooks/azuredevops-pat.md) | Azure DevOps | Personal access tokens via PAT Lifecycle API | Azure VM + Akeyless Gateway |
-| [`github_app_token`](runbooks/github-app-token.md) | GitHub | App installation access tokens via `/app/installations/{id}/access_tokens` | github.com (Fahmy-Kadiri-akl App) |
-| `argocd_token` | ArgoCD | Account tokens via ArgoCD API | Self-hosted ArgoCD |
-| `gitlab_token` | GitLab | Personal access tokens via Admin API | Self-hosted GitLab |
-| `grafana_token` | Grafana | Service account tokens via Grafana API | Grafana Cloud |
-| `cloudflare_token` | Cloudflare | API tokens via Cloudflare v4 API | Cloudflare (user-scoped) |
+| Service | Type | What It Rotates | Tested On |
+|---------|------|-----------------|-----------|
+| (test) | `echo` | Returns payload with `rotated_at` timestamp | Local |
+| Azure DevOps | [`pat`](runbooks/azuredevops-pat.md) | Personal access tokens via PAT Lifecycle API | Azure VM + Akeyless Gateway |
+| GitHub | [`github_app_token`](runbooks/github-app-token.md) | App installation access tokens via `/app/installations/{id}/access_tokens` | github.com (Fahmy-Kadiri-akl App) |
+| ArgoCD | `argocd_token` | Account tokens via ArgoCD API | Self-hosted ArgoCD |
+| GitLab | `gitlab_token` | Personal access tokens via Admin API | Self-hosted GitLab |
+| Grafana | `grafana_token` | Service account tokens via Grafana API | Grafana Cloud |
+| Cloudflare | `cloudflare_token` | API tokens via Cloudflare v4 API | Cloudflare (user-scoped) |
 
 ### Built, Not Yet Tested
 
 These targets are implemented and compile but have not been validated against a live instance. They require free-tier account signups to test.
 
-| Type | Service | What It Rotates | Signup URL |
-|------|---------|-----------------|------------|
-| `password` | Ansible AWX/AAP | User passwords | Requires AWX/AAP instance |
-| `api_key` | Ansible AWX/AAP | Personal access tokens | Requires AWX/AAP instance |
-| `jfrog_token` | JFrog Artifactory | Access tokens | jfrog.com/start-free |
-| `datadog_key` | Datadog | API keys and application keys | datadoghq.com/free-datadog-trial |
-| `tfc_token` | Terraform Cloud | Team/org API tokens | app.terraform.io/signup |
-| `confluent_key` | Confluent Cloud | API keys | confluent.io/get-started |
-| `pagerduty_key` | PagerDuty | REST API keys | pagerduty.com/sign-up |
-| `servicenow_cred` | ServiceNow | OAuth client secrets | developer.servicenow.com |
-| `slack_token` | Slack | Bot/user tokens (token rotation API) | api.slack.com/apps |
-| `sendgrid_key` | SendGrid | API keys | signup.sendgrid.com |
-| `okta_key` | Okta | SSWS API tokens | developer.okta.com/signup |
-| `newrelic_key` | New Relic | User and ingest API keys | newrelic.com/signup |
-| `aerospike_password` | Aerospike | User passwords (admin wire protocol) | Requires Aerospike EE (security enabled); CE returns a clear SECURITY_NOT_ENABLED error |
+| Service | Type | What It Rotates | Signup URL |
+|---------|------|-----------------|------------|
+| Ansible AWX/AAP | `password` | User passwords | Requires AWX/AAP instance |
+| Ansible AWX/AAP | `api_key` | Personal access tokens | Requires AWX/AAP instance |
+| JFrog Artifactory | `jfrog_token` | Access tokens | jfrog.com/start-free |
+| Datadog | `datadog_key` | API keys and application keys | datadoghq.com/free-datadog-trial |
+| Terraform Cloud | `tfc_token` | Team/org API tokens | app.terraform.io/signup |
+| Confluent Cloud | `confluent_key` | API keys | confluent.io/get-started |
+| PagerDuty | `pagerduty_key` | REST API keys | pagerduty.com/sign-up |
+| ServiceNow | `servicenow_cred` | OAuth client secrets | developer.servicenow.com |
+| Slack | `slack_token` | Bot/user tokens (token rotation API) | api.slack.com/apps |
+| SendGrid | `sendgrid_key` | API keys | signup.sendgrid.com |
+| Okta | `okta_key` | SSWS API tokens | developer.okta.com/signup |
+| New Relic | `newrelic_key` | User and ingest API keys | newrelic.com/signup |
+| Aerospike | `aerospike_password` | User passwords (admin wire protocol) | Requires Aerospike EE (security enabled); CE returns a clear SECURITY_NOT_ENABLED error |
 
 ### Runbooks
 
