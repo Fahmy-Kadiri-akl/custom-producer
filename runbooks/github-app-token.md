@@ -28,6 +28,29 @@ This runbook covers steps 1 through 4 in isolation, so the output (an `app_id` +
 
 ---
 
+## Before you use this: read the native-alternative comparison
+
+Akeyless ships a native GitHub integration that produces the **same credential** this rotator produces: a `ghs_...` GitHub App installation access token, minted via `POST /app/installations/{id}/access_tokens`. See [docs.akeyless.io/docs/github-target](https://docs.akeyless.io/docs/github-target) and [docs.akeyless.io/docs/github-dynamic-secret](https://docs.akeyless.io/docs/github-dynamic-secret).
+
+The two paths differ only in **Akeyless's secret model**, not in what GitHub sees.
+
+| | Akeyless native | This rotator (`github_app_token`) |
+|---|---|---|
+| Akeyless object type | **Dynamic Secret** | **Rotated Secret** |
+| Output credential | `ghs_...` installation access token | `ghs_...` installation access token |
+| Per-consumer isolation | Yes. Each lease gets its own freshly-minted token. | No. One shared current value rolled on a schedule; every consumer reads the same value. |
+| Where the code runs | Inside the Akeyless gateway binary | Separate webhook container you deploy and operate (the unified custom-producer in this repo) |
+| Active revoke of previous token | No. Token becomes obsolete when TTL expires. | Yes. Best-effort `DELETE /installation/token` on each rotation, plus the natural ~1h expiry. |
+| Long-lived input lives in | Akeyless target (private key, base64) + dynamic secret (installation_id, scope) | The rotated secret payload (App ID, installation ID, PEM, scope all together) |
+
+**Use the native dynamic secret if:** consumers can call Akeyless on demand, you want per-consumer leases, and you have no other reason to run a custom-producer container.
+
+**Use this rotated-secret rotator if:** you specifically want a single shared current value that rolls on a schedule (e.g. multiple CI workflows that all read `/Rotated/X` and expect the same value, monitoring dashboards consuming a stable secret path, audit on the *secret* rather than per-lease), or you already operate this custom-producer container for other targets and prefer a single operational surface.
+
+If you're not sure: pick the native dynamic secret first. It is simpler. The rest of this runbook assumes you have decided you want the rotated-secret model.
+
+---
+
 ## Failure mode you are avoiding
 
 The alternative is putting a long-lived classic PAT into the automation and pretending it is rotated. It "works" until one of:

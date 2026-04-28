@@ -856,6 +856,8 @@ Rotates an Ansible AWX/AAP personal access token using create-before-revoke.
 
 Mints GitHub App **installation access tokens** (the `ghs_...` short-lived tokens, ~1h lifetime). Each rotation generates a fresh JWT signed with the App's private key and exchanges it via `POST /app/installations/{installation_id}/access_tokens`.
 
+> **Read this first: native alternative.** Akeyless natively supports the same GitHub primitive as a [Dynamic Secret](https://docs.akeyless.io/docs/github-dynamic-secret) running inside the gateway, producing identical `ghs_...` installation access tokens. The native path uses Akeyless's *dynamic-secret* model (per-consumer leases, fresh token per call). This rotator uses the *rotated-secret* model (one shared current value rolled on a schedule). If a `ghs_...` token is all you need, prefer the native path. Choose this rotator only when you specifically want rotated-secret semantics, or when you already operate this custom-producer container for other targets. Full comparison in the [runbook](runbooks/github-app-token.md#before-you-use-this-read-the-native-alternative-comparison).
+
 > GitHub does not expose any REST API for creating fine-grained or classic PATs. Those can only be created interactively in the user's settings. Installation access tokens are the supported short-lived primitive and are what this rotator targets.
 
 Full setup (creating the App, obtaining the App ID, installation ID, and private key, scoping permissions): see [runbooks/github-app-token.md](runbooks/github-app-token.md).
