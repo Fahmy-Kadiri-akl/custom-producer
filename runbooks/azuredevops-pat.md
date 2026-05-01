@@ -138,7 +138,7 @@ If you are unsure whether you have the Entra admin role required:
 ```bash
 az login --tenant <tenant-id>
 az rest --method GET --uri "https://graph.microsoft.com/v1.0/me/memberOf" \
-  --query "value[?'@odata.type'=='#microsoft.graph.directoryRole'].displayName" -o tsv
+  --query "value[?\"@odata.type\"=='#microsoft.graph.directoryRole'].displayName" -o tsv
 ```
 
 A line reading `Global Administrator`, `Application Administrator`, or `Cloud Application Administrator` means you can do steps 1a–1e. An empty result means you cannot. Find someone who can.
