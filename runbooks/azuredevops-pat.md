@@ -430,7 +430,15 @@ curl -sS \
 jq . /tmp/pats.json | head -20
 ```
 
-**Success looks like:**
+**Pass criterion:** `HTTP 200` with a JSON body containing `continuationToken` and `patTokens`. The `patTokens` array may be empty, which just means the delegated user has not minted any PATs in this org yet (expected on a fresh bootstrap). Proceed to 3c, then re-run 3b to see the new PAT.
+
+Empty result (fresh user, this is a pass):
+```
+HTTP 200
+{ "continuationToken": "", "patTokens": [] }
+```
+
+Populated result (after 3c, or on a user with existing PATs):
 ```
 HTTP 200
 {
@@ -505,8 +513,8 @@ forever, on schedule:
 ## Step 4: Wire the RT into an Akeyless rotated secret
 
 > **👤 Performed by: Role C (Akeyless admin)**
-> **Required permissions:** Akeyless access ID with the roles `admin` on `/Rotated/*` and `/Targets/*`, or equivalent. You also need write access to the Kubernetes namespace running the custom rotator (to patch a secret if 4b shows the access ID is wrong).
-> **Assumes:** the custom-producer rotator from `Fahmy-Kadiri-akl/custom-producer` is already deployed to your cluster and reachable by your Akeyless gateway at some in-cluster URL. Rotator deployment itself is covered in a separate runbook.
+> **Required permissions:** Akeyless access ID with the roles `admin` on `/Rotated/*` and `/Targets/*`, or equivalent. You also need write access to the Kubernetes namespace running the custom rotator (to patch the rotator deployment's env var if 4b shows the access ID is wrong).
+> **Assumes:** the custom-producer rotator from `Fahmy-Kadiri-akl/custom-producer` is already deployed to your cluster and reachable by your Akeyless gateway at some in-cluster URL. See [Deploying to Kubernetes](../README.md#deploying-to-kubernetes) in the main README for the deployment manifest and namespace setup.
 
 This section wires the bootstrapped refresh token into an Akeyless Rotated Secret so the rotator can mint and revoke Azure DevOps PATs on a schedule.
 
@@ -544,16 +552,15 @@ GATEWAY_ACCESS_ID=$(kubectl -n <gateway-namespace> \
 echo "$GATEWAY_ACCESS_ID"
 # expected: p-xxxxxxxxxxxxxx
 
-# 2. Patch the rotator's secret so AKEYLESS_ACCESS_ID matches
-kubectl -n <rotator-namespace> patch secret rotator-secrets \
-  -p "{\"stringData\":{\"akeyless-access-id\":\"$GATEWAY_ACCESS_ID\"}}"
+# 2. Patch the rotator's deployment env var to match
+kubectl -n <rotator-namespace> set env deployment/custom-producer \
+  AKEYLESS_ACCESS_ID="$GATEWAY_ACCESS_ID"
 
-# 3. Restart the rotator to pick up the new value
-kubectl -n <rotator-namespace> rollout restart deployment/rotator
-kubectl -n <rotator-namespace> rollout status deployment/rotator --timeout=60s
+# 3. Wait for the rollout (set env triggers a restart automatically)
+kubectl -n <rotator-namespace> rollout status deployment/custom-producer --timeout=60s
 ```
 
-> Secret path, namespace, and deployment name will vary with your chart. The default `rotator-secrets` / `rotator` / `rotator` names come from the `custom-producer` chart.
+> Namespace varies per install. Deployment name `custom-producer` is the chart default and matches the manifest in the main README. If your install renamed the deployment, substitute it here.
 
 ### 4c. Create the Web Target (Role C)
 
