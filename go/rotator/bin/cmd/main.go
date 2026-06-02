@@ -63,6 +63,7 @@ func main() {
 	reg.Register(datadog.New())
 	reg.Register(grafana.New())
 	reg.Register(openobserve.New())
+	reg.Register(openobserve.NewPasswordTarget())
 	reg.Register(pagerduty.New())
 	reg.Register(newrelic.New())
 

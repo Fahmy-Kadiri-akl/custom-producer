@@ -42,11 +42,11 @@ func (t *Target) client(baseURL string) (*Client, error) {
 	return NewClient(baseURL, t.adminUsername, t.adminPassword), nil
 }
 
-func org(p TokenPayload) string {
-	if p.Organization == "" {
+func orgOrDefault(o string) string {
+	if o == "" {
 		return "default"
 	}
-	return p.Organization
+	return o
 }
 
 // ephemeralEmail derives a unique per-lease service-account email from a base
@@ -77,20 +77,20 @@ func (t *Target) Create(ctx context.Context, req *types.CreateRequest) (*types.C
 		return nil, err
 	}
 	email := ephemeralEmail(p.Email)
-	if err := client.CreateServiceAccount(ctx, org(p), email, saFirstName, saLastName); err != nil {
+	if err := client.CreateServiceAccount(ctx, orgOrDefault(p.Organization), email, saFirstName, saLastName); err != nil {
 		return nil, fmt.Errorf("create service account: %w", err)
 	}
-	token, err := client.GetToken(ctx, org(p), email)
+	token, err := client.GetToken(ctx, orgOrDefault(p.Organization), email)
 	if err != nil {
 		return nil, fmt.Errorf("get token: %w", err)
 	}
-	log.Info().Str("email", email).Str("org", org(p)).Msg("created ephemeral OpenObserve service account")
+	log.Info().Str("email", email).Str("org", orgOrDefault(p.Organization)).Msg("created ephemeral OpenObserve service account")
 	// Response must be a JSON object (Akeyless unmarshals it into a map), not a string.
 	resp := map[string]string{
 		"email":        email,
 		"token":        token,
 		"base_url":     p.BaseURL,
-		"organization": org(p),
+		"organization": orgOrDefault(p.Organization),
 	}
 	return &types.CreateResponse{ID: email, Response: resp}, nil
 }
@@ -108,7 +108,7 @@ func (t *Target) Revoke(ctx context.Context, req *types.RevokeRequest) (*types.R
 	}
 	revoked := make([]string, 0, len(req.IDs))
 	for _, id := range req.IDs {
-		if err := client.DeleteServiceAccount(ctx, org(p), id); err != nil {
+		if err := client.DeleteServiceAccount(ctx, orgOrDefault(p.Organization), id); err != nil {
 			log.Warn().Err(err).Str("email", id).Msg("failed to delete OpenObserve service account")
 			continue
 		}
@@ -132,11 +132,11 @@ func (t *Target) Rotate(ctx context.Context, req *types.RotateRequest) (*types.R
 	if err != nil {
 		return nil, err
 	}
-	newToken, err := client.RotateToken(ctx, org(p), p.Email, saFirstName, saLastName)
+	newToken, err := client.RotateToken(ctx, orgOrDefault(p.Organization), p.Email, saFirstName, saLastName)
 	if err != nil {
 		return nil, fmt.Errorf("rotate token: %w", err)
 	}
-	log.Info().Str("email", p.Email).Str("org", org(p)).Msg("rotated OpenObserve service-account token")
+	log.Info().Str("email", p.Email).Str("org", orgOrDefault(p.Organization)).Msg("rotated OpenObserve service-account token")
 	p.Token = newToken.Token
 	out, _ := json.Marshal(p)
 	return &types.RotateResponse{Payload: string(out)}, nil

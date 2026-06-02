@@ -134,3 +134,58 @@ func (c *Client) RotateToken(ctx context.Context, org, email, firstName, lastNam
 	}
 	return &token, nil
 }
+
+// CreateUser provisions a real OpenObserve user (UI login capable) with an
+// initial password.
+func (c *Client) CreateUser(ctx context.Context, org, email, password, firstName, lastName, role string) error {
+	body, _ := json.Marshal(map[string]string{
+		"email":      email,
+		"password":   password,
+		"first_name": firstName,
+		"last_name":  lastName,
+		"role":       role,
+	})
+	url := fmt.Sprintf("%s/api/%s/users", c.baseURL, org)
+	code, respBody, err := c.do(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return err
+	}
+	if code != http.StatusOK {
+		return fmt.Errorf("create user (HTTP %d): %s", code, string(respBody))
+	}
+	return nil
+}
+
+// SetUserPassword sets a new password on an existing user, invalidating the
+// previous one.
+func (c *Client) SetUserPassword(ctx context.Context, org, email, newPassword, firstName, lastName, role string) error {
+	body, _ := json.Marshal(map[string]string{
+		"new_password": newPassword,
+		"first_name":   firstName,
+		"last_name":    lastName,
+		"role":         role,
+	})
+	url := fmt.Sprintf("%s/api/%s/users/%s", c.baseURL, org, email)
+	code, respBody, err := c.do(ctx, http.MethodPut, url, body)
+	if err != nil {
+		return err
+	}
+	if code != http.StatusOK {
+		return fmt.Errorf("set user password (HTTP %d): %s", code, string(respBody))
+	}
+	return nil
+}
+
+// DeleteUser removes a user. A missing user is treated as already deleted
+// (idempotent).
+func (c *Client) DeleteUser(ctx context.Context, org, email string) error {
+	url := fmt.Sprintf("%s/api/%s/users/%s", c.baseURL, org, email)
+	code, respBody, err := c.do(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	if code != http.StatusOK && code != http.StatusNotFound {
+		return fmt.Errorf("delete user (HTTP %d): %s", code, string(respBody))
+	}
+	return nil
+}
