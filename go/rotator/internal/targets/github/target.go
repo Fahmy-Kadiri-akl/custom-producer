@@ -32,7 +32,7 @@ func (t *Target) Create(_ context.Context, req *types.CreateRequest) (*types.Cre
 func (t *Target) Revoke(ctx context.Context, req *types.RevokeRequest) (*types.RevokeResponse, error) {
 	var p AppTokenPayload
 	if err := json.Unmarshal([]byte(req.Payload), &p); err != nil {
-		return &types.RevokeResponse{Revoked: req.IDs, Message: "acknowledged (payload not parseable)"}, nil
+		return nil, fmt.Errorf("parse payload: %w", err)
 	}
 	if p.Token != "" {
 		if err := RevokeInstallationToken(ctx, p.Token); err != nil {

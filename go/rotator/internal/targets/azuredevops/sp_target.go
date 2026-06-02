@@ -18,8 +18,8 @@ import (
 // the Azure DevOps resource, minted via Entra client_credentials.
 type SPTokenTarget struct{}
 
-func NewSPTokenTarget() *SPTokenTarget    { return &SPTokenTarget{} }
-func (t *SPTokenTarget) Type() string     { return "azuredevops_sp_token" }
+func NewSPTokenTarget() *SPTokenTarget { return &SPTokenTarget{} }
+func (t *SPTokenTarget) Type() string  { return "azuredevops_sp_token" }
 
 func (t *SPTokenTarget) Create(_ context.Context, req *types.CreateRequest) (*types.CreateResponse, error) {
 	var p SPTokenPayload
