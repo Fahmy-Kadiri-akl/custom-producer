@@ -21,6 +21,7 @@ import (
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/jfrog"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/newrelic"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/okta"
+	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/openobserve"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/pagerduty"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/sendgrid"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/servicenow"
@@ -61,6 +62,7 @@ func main() {
 	// Monitoring & observability
 	reg.Register(datadog.New())
 	reg.Register(grafana.New())
+	reg.Register(openobserve.New())
 	reg.Register(pagerduty.New())
 	reg.Register(newrelic.New())
 

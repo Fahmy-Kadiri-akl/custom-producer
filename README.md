@@ -1,6 +1,6 @@
 # Custom Producer for Akeyless
 
-A single container that rotates credentials across 19 target systems. One Docker image, one Akeyless Web Target, unlimited rotated secrets -- distinguished by the `type` field in the Akeyless payload.
+A single container that rotates credentials across 20 target systems. One Docker image, one Akeyless Web Target, unlimited rotated secrets -- distinguished by the `type` field in the Akeyless payload.
 
 ## Table of Contents
 
@@ -73,7 +73,7 @@ flowchart TB
     R --> T2["GitLab"]
     R --> T3["Grafana"]
     R --> T4["Cloudflare"]
-    R --> T5["... 19 targets"]
+    R --> T5["... 20 targets"]
 
     style GW fill:#4A90D9,stroke:#2E6BA4,color:#fff
     style R fill:#81C784,stroke:#4CAF50,color:#fff
@@ -96,7 +96,7 @@ flowchart TB
 
 ### Internal Code Structure
 
-The rotator uses a registry pattern internally. Each target implements a `Target` interface with `Create`, `Revoke`, and `Rotate` methods. At startup, `main.go` registers all 19 targets. The HTTP handler parses incoming requests, extracts the `type` field, and dispatches to the matching target. This makes adding new targets straightforward -- implement the interface, register it, rebuild.
+The rotator uses a registry pattern internally. Each target implements a `Target` interface with `Create`, `Revoke`, and `Rotate` methods. At startup, `main.go` registers all 20 targets. The HTTP handler parses incoming requests, extracts the `type` field, and dispatches to the matching target. This makes adding new targets straightforward -- implement the interface, register it, rebuild.
 
 ---
 
@@ -114,6 +114,7 @@ The rotator uses a registry pattern internally. Each target implements a `Target
 | GitLab | `gitlab_token` | Personal access tokens via Admin API | Self-hosted GitLab |
 | Grafana | `grafana_token` | Service account tokens via Grafana API | Grafana Cloud |
 | Cloudflare | `cloudflare_token` | API tokens via Cloudflare v4 API | Cloudflare (user-scoped) |
+| OpenObserve | `openobserve_token` | Service-account tokens via the service_accounts rotate API | Self-hosted OpenObserve v0.40 |
 
 ### Built, Not Yet Tested
 
@@ -1614,7 +1615,7 @@ The rotator returns the full payload with updated credential fields. Akeyless st
 go/
   rotator/
     Dockerfile                          # Multi-stage Go 1.25 + Alpine 3.21 build
-    bin/cmd/main.go                     # Entrypoint: registers all 19 targets, starts HTTP server
+    bin/cmd/main.go                     # Entrypoint: registers all 20 targets, starts HTTP server
     internal/
       handler/handler.go                # HTTP routes, auth middleware, type-based dispatch
       registry/registry.go              # Target interface and type registry
