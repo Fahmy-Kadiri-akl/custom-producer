@@ -85,13 +85,14 @@ func (t *Target) Create(ctx context.Context, req *types.CreateRequest) (*types.C
 		return nil, fmt.Errorf("get token: %w", err)
 	}
 	log.Info().Str("email", email).Str("org", org(p)).Msg("created ephemeral OpenObserve service account")
-	resp, _ := json.Marshal(map[string]string{
+	// Response must be a JSON object (Akeyless unmarshals it into a map), not a string.
+	resp := map[string]string{
 		"email":        email,
 		"token":        token,
 		"base_url":     p.BaseURL,
 		"organization": org(p),
-	})
-	return &types.CreateResponse{ID: email, Response: string(resp)}, nil
+	}
+	return &types.CreateResponse{ID: email, Response: resp}, nil
 }
 
 // Revoke handles /sync/revoke for the dynamic-secret model: it deletes the
