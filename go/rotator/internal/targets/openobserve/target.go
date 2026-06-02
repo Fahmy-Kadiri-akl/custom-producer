@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -11,10 +12,42 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-type Target struct{}
+// Display names for managed service accounts. Cosmetic, but required by the
+// OpenObserve service-account API body.
+const (
+	saFirstName = "akeyless"
+	saLastName  = "service-account"
+)
 
-func New() *Target             { return &Target{} }
+// Target rotates and provisions OpenObserve service-account tokens. Admin
+// credentials are read from the environment, never from the payload.
+type Target struct {
+	adminUsername string
+	adminPassword string
+}
+
+func New() *Target {
+	return &Target{
+		adminUsername: os.Getenv("OPENOBSERVE_ADMIN_USERNAME"),
+		adminPassword: os.Getenv("OPENOBSERVE_ADMIN_PASSWORD"),
+	}
+}
+
 func (t *Target) Type() string { return "openobserve_token" }
+
+func (t *Target) client(baseURL string) (*Client, error) {
+	if t.adminUsername == "" || t.adminPassword == "" {
+		return nil, fmt.Errorf("OPENOBSERVE_ADMIN_USERNAME and OPENOBSERVE_ADMIN_PASSWORD must be set in the rotator environment")
+	}
+	return NewClient(baseURL, t.adminUsername, t.adminPassword), nil
+}
+
+func org(p TokenPayload) string {
+	if p.Organization == "" {
+		return "default"
+	}
+	return p.Organization
+}
 
 // ephemeralEmail derives a unique per-lease service-account email from a base
 // address by inserting a timestamp into the local part, e.g.
@@ -36,28 +69,27 @@ func (t *Target) Create(ctx context.Context, req *types.CreateRequest) (*types.C
 	if err := json.Unmarshal([]byte(req.Payload), &p); err != nil {
 		return nil, fmt.Errorf("parse payload: %w", err)
 	}
-	org := p.Organization
-	if org == "" {
-		org = "default"
-	}
 	if p.Email == "" {
 		return nil, fmt.Errorf("email is required")
 	}
-	client := NewClient(p.BaseURL, p.AdminUsername, p.AdminPassword)
+	client, err := t.client(p.BaseURL)
+	if err != nil {
+		return nil, err
+	}
 	email := ephemeralEmail(p.Email)
-	if err := client.CreateServiceAccount(ctx, org, email, p.FirstName, p.LastName); err != nil {
+	if err := client.CreateServiceAccount(ctx, org(p), email, saFirstName, saLastName); err != nil {
 		return nil, fmt.Errorf("create service account: %w", err)
 	}
-	token, err := client.GetToken(ctx, org, email)
+	token, err := client.GetToken(ctx, org(p), email)
 	if err != nil {
 		return nil, fmt.Errorf("get token: %w", err)
 	}
-	log.Info().Str("email", email).Str("org", org).Msg("created ephemeral OpenObserve service account")
+	log.Info().Str("email", email).Str("org", org(p)).Msg("created ephemeral OpenObserve service account")
 	resp, _ := json.Marshal(map[string]string{
 		"email":        email,
 		"token":        token,
 		"base_url":     p.BaseURL,
-		"organization": org,
+		"organization": org(p),
 	})
 	return &types.CreateResponse{ID: email, Response: string(resp)}, nil
 }
@@ -69,14 +101,13 @@ func (t *Target) Revoke(ctx context.Context, req *types.RevokeRequest) (*types.R
 	if err := json.Unmarshal([]byte(req.Payload), &p); err != nil {
 		return nil, fmt.Errorf("parse payload: %w", err)
 	}
-	org := p.Organization
-	if org == "" {
-		org = "default"
+	client, err := t.client(p.BaseURL)
+	if err != nil {
+		return nil, err
 	}
-	client := NewClient(p.BaseURL, p.AdminUsername, p.AdminPassword)
 	revoked := make([]string, 0, len(req.IDs))
 	for _, id := range req.IDs {
-		if err := client.DeleteServiceAccount(ctx, org, id); err != nil {
+		if err := client.DeleteServiceAccount(ctx, org(p), id); err != nil {
 			log.Warn().Err(err).Str("email", id).Msg("failed to delete OpenObserve service account")
 			continue
 		}
@@ -93,19 +124,18 @@ func (t *Target) Rotate(ctx context.Context, req *types.RotateRequest) (*types.R
 	if err := json.Unmarshal([]byte(req.Payload), &p); err != nil {
 		return nil, fmt.Errorf("parse payload: %w", err)
 	}
-	org := p.Organization
-	if org == "" {
-		org = "default"
-	}
 	if p.Email == "" {
 		return nil, fmt.Errorf("email is required")
 	}
-	client := NewClient(p.BaseURL, p.AdminUsername, p.AdminPassword)
-	newToken, err := client.RotateToken(ctx, org, p.Email, p.FirstName, p.LastName)
+	client, err := t.client(p.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	newToken, err := client.RotateToken(ctx, org(p), p.Email, saFirstName, saLastName)
 	if err != nil {
 		return nil, fmt.Errorf("rotate token: %w", err)
 	}
-	log.Info().Str("email", p.Email).Str("org", org).Msg("rotated OpenObserve service-account token")
+	log.Info().Str("email", p.Email).Str("org", org(p)).Msg("rotated OpenObserve service-account token")
 	p.Token = newToken.Token
 	out, _ := json.Marshal(p)
 	return &types.RotateResponse{Payload: string(out)}, nil

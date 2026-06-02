@@ -1,20 +1,21 @@
 package openobserve
 
-// TokenPayload for OpenObserve service-account token rotation.
+// TokenPayload is the OpenObserve rotated/dynamic secret payload.
 //
-// OpenObserve authenticates service accounts with HTTP Basic auth using the
-// account email as the username and the account token as the password. A
-// single rotate call (PUT .../service_accounts/{email}?rotateToken=true)
-// mints a new token and invalidates the previous one atomically, so there is
-// no separate revoke step.
+// It carries only non-sensitive routing fields plus the issued token. The
+// OpenObserve admin credentials the rotator needs to call the management API
+// are deliberately NOT part of the payload: they are read from the rotator
+// environment (OPENOBSERVE_ADMIN_USERNAME / OPENOBSERVE_ADMIN_PASSWORD), so
+// they are never stored in, nor returned with, the secret value a consumer
+// reads.
+//
+// Auth model: OpenObserve service accounts authenticate with HTTP Basic auth
+// using the account email as the username and the token as the password.
+// Service accounts are API-only and cannot sign in to the web UI.
 type TokenPayload struct {
-	Type          string `json:"type"`           // "openobserve_token"
-	BaseURL       string `json:"base_url"`       // e.g. "http://openobserve.observability.svc:5080"
-	AdminUsername string `json:"admin_username"` // root/admin user email for the API
-	AdminPassword string `json:"admin_password"` // root/admin password
-	Organization  string `json:"organization"`   // org identifier, e.g. "default"
-	Email         string `json:"email"`          // rotate: exact SA email; create: base address a unique per-lease SA is derived from
-	FirstName     string `json:"first_name"`     // SA display name, preserved on rotate
-	LastName      string `json:"last_name"`      // SA display name, preserved on rotate
-	Token         string `json:"token"`          // current token value, managed by rotator
+	Type         string `json:"type"`                   // "openobserve_token"
+	BaseURL      string `json:"base_url"`               // e.g. "http://openobserve.observability.svc:5080"
+	Organization string `json:"organization,omitempty"` // org identifier, defaults to "default"
+	Email        string `json:"email"`                  // rotate: exact SA email; create: base address a unique per-lease SA is derived from
+	Token        string `json:"token,omitempty"`        // issued token, managed by the rotator
 }
