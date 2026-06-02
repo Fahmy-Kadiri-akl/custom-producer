@@ -13,7 +13,7 @@ type TokenPayload struct {
 	AdminUsername string `json:"admin_username"` // root/admin user email for the API
 	AdminPassword string `json:"admin_password"` // root/admin password
 	Organization  string `json:"organization"`   // org identifier, e.g. "default"
-	Email         string `json:"email"`          // service-account email whose token is rotated
+	Email         string `json:"email"`          // rotate: exact SA email; create: base address a unique per-lease SA is derived from
 	FirstName     string `json:"first_name"`     // SA display name, preserved on rotate
 	LastName      string `json:"last_name"`      // SA display name, preserved on rotate
 	Token         string `json:"token"`          // current token value, managed by rotator
