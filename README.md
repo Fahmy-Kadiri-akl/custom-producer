@@ -73,7 +73,7 @@ flowchart TB
     R --> T2["GitLab"]
     R --> T3["Grafana"]
     R --> T4["Cloudflare"]
-    R --> T5["... 20 targets"]
+    R --> T5["... 24 targets"]
 
     style GW fill:#4A90D9,stroke:#2E6BA4,color:#fff
     style R fill:#81C784,stroke:#4CAF50,color:#fff
@@ -96,7 +96,7 @@ flowchart TB
 
 ### Internal Code Structure
 
-The rotator uses a registry pattern internally. Each target implements a `Target` interface with `Create`, `Revoke`, and `Rotate` methods. At startup, `main.go` registers all 20 targets. The HTTP handler parses incoming requests, extracts the `type` field, and dispatches to the matching target. This makes adding new targets straightforward -- implement the interface, register it, rebuild.
+The rotator uses a registry pattern internally. Each target implements a `Target` interface with `Create`, `Revoke`, and `Rotate` methods. At startup, `main.go` registers all 24 targets. The HTTP handler parses incoming requests, extracts the `type` field, and dispatches to the matching target. This makes adding new targets straightforward -- implement the interface, register it, rebuild.
 
 ---
 
@@ -116,6 +116,7 @@ The rotator uses a registry pattern internally. Each target implements a `Target
 | Cloudflare | `cloudflare_token` | API tokens via Cloudflare v4 API | Cloudflare (user-scoped) |
 | OpenObserve | [`openobserve_token`](runbooks/openobserve.md) | Service-account tokens (API access) via the service_accounts rotate API | Self-hosted OpenObserve v0.40 |
 | OpenObserve | [`openobserve_password`](runbooks/openobserve.md) | User passwords (web UI login) via the users API | Self-hosted OpenObserve v0.40 |
+| Microsoft Graph | [`microsoft_graph_app_secret`](runbooks/microsoft-graph-app-secret.md) | Entra app-registration client secrets via Graph `addPassword`/`removePassword` | Akeyless lab tenant |
 
 ### Built, Not Yet Tested
 
@@ -147,6 +148,7 @@ Per-rotator runbooks live under [`runbooks/`](runbooks/). Each covers the comple
 | `azuredevops_sp_token` (Azure DevOps) | [runbooks/azuredevops-sp-token.md](runbooks/azuredevops-sp-token.md) |
 | `github_app_token` | [runbooks/github-app-token.md](runbooks/github-app-token.md) |
 | `openobserve_token` / `openobserve_password` | [runbooks/openobserve.md](runbooks/openobserve.md) |
+| `microsoft_graph_app_secret` | [runbooks/microsoft-graph-app-secret.md](runbooks/microsoft-graph-app-secret.md) |
 
 More runbooks will be added as each rotator is validated in production.
 
@@ -1252,6 +1254,37 @@ rotations succeed with no code changes.
 
 ---
 
+### microsoft_graph_app_secret
+
+Rotates the **client secret of a Microsoft Entra ID (Azure AD) application registration** through the Microsoft Graph `addPassword` / `removePassword` API. The rotator authenticates as a dedicated app registration using a certificate, not as the target app, so the target apps need no directory-management permission.
+
+> **Auth model.** The rotator app holds `Application.ReadWrite.OwnedBy` and is an owner of each target app. It authenticates with a certificate configured through `MSGRAPH_ROTATOR_*` environment variables, never from the payload. Full setup, including the certificate and the Entra permission and ownership grants, is in the runbook.
+
+**Full setup:** see [runbooks/microsoft-graph-app-secret.md](runbooks/microsoft-graph-app-secret.md). Covers the rotator app registration and certificate, the `OwnedBy` permission and ownership grants, payload assembly, and verification.
+
+```json
+{
+  "type": "microsoft_graph_app_secret",
+  "tenant_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "client_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "client_secret": "<current secret value; seed at create time>",
+  "key_id": "<current secret keyId; seed at create time>"
+}
+```
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `tenant_id` | Yes | -- | Target app's Entra tenant; must match the rotator tenant |
+| `client_id` | Yes | -- | Target application's appId |
+| `display_name` | No | `akeyless-rotated` | Secret display name in the app registration |
+| `client_secret` | Seed | -- | Live secret value consumers read (managed by rotator) |
+| `key_id` | Seed | -- | Current secret's keyId, removed on the next rotation (managed by rotator) |
+| `expires_at` | Managed | -- | Secret expiry timestamp (set by rotator) |
+
+New secrets are created with a 14-day `endDateTime`, so set `--rotation-interval` shorter than that. The interval is in **minutes** for custom rotators; `10080` is weekly. The rotator retries the post-`addPassword` `removePassword` on Entra's transient HTTP 409 concurrency response.
+
+---
+
 ## Adding a New Target
 
 ### Step 1: Create the target package
@@ -1617,7 +1650,7 @@ The rotator returns the full payload with updated credential fields. Akeyless st
 go/
   rotator/
     Dockerfile                          # Multi-stage Go 1.25 + Alpine 3.21 build
-    bin/cmd/main.go                     # Entrypoint: registers all 20 targets, starts HTTP server
+    bin/cmd/main.go                     # Entrypoint: registers all 24 targets, starts HTTP server
     internal/
       handler/handler.go                # HTTP routes, auth middleware, type-based dispatch
       registry/registry.go              # Target interface and type registry
