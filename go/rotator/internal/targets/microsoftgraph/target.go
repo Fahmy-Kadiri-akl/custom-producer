@@ -106,13 +106,14 @@ func (t *Target) Create(_ context.Context, req *types.CreateRequest) (*types.Cre
 }
 
 // Revoke handles /sync/revoke. It removes the current client secret from the
-// target app so the credential does not linger after the item is deleted.
-// Failure to remove is best-effort: the item is still acknowledged so Akeyless
-// can clean it up.
+// target app so the credential does not linger after the item is deleted. A
+// failure to remove is returned as an error so Akeyless can retry, unlike
+// Rotate, where the previous secret is removed best-effort once the new one
+// is already live.
 func (t *Target) Revoke(ctx context.Context, req *types.RevokeRequest) (*types.RevokeResponse, error) {
 	var p AppSecretPayload
 	if err := json.Unmarshal([]byte(req.Payload), &p); err != nil {
-		return &types.RevokeResponse{Revoked: req.IDs, Message: "acknowledged (unparseable payload)"}, nil
+		return nil, fmt.Errorf("parse payload: %w", err)
 	}
 	if p.KeyID == "" || p.ClientID == "" {
 		return &types.RevokeResponse{Revoked: req.IDs, Message: "acknowledged (no client_id/key_id to remove)"}, nil
@@ -122,8 +123,7 @@ func (t *Target) Revoke(ctx context.Context, req *types.RevokeRequest) (*types.R
 		return nil, err
 	}
 	if err := client.removePassword(ctx, p.ClientID, p.KeyID); err != nil {
-		log.Warn().Err(err).Str("client_id", p.ClientID).Str("key_id", p.KeyID).Msg("failed to remove Graph password on revoke")
-		return &types.RevokeResponse{Message: "acknowledged (removePassword failed, see logs)"}, nil
+		return nil, fmt.Errorf("removePassword on revoke: %w", err)
 	}
 	log.Info().Str("client_id", p.ClientID).Str("key_id", p.KeyID).Msg("removed Graph client secret on revoke")
 	return &types.RevokeResponse{Revoked: req.IDs, Message: "removed"}, nil
