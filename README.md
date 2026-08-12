@@ -116,6 +116,7 @@ The rotator uses a registry pattern internally. Each target implements a `Target
 | Cloudflare | `cloudflare_token` | API tokens via Cloudflare v4 API | Cloudflare (user-scoped) |
 | OpenObserve | [`openobserve_token`](runbooks/openobserve.md) | Service-account tokens (API access) via the service_accounts rotate API | Self-hosted OpenObserve v0.40 |
 | OpenObserve | [`openobserve_password`](runbooks/openobserve.md) | User passwords (web UI login) via the users API | Self-hosted OpenObserve v0.40 |
+| Apigee X | [`apigee_x_token`](runbooks/apigee-x-token.md) | OAuth2 management-API access tokens via GCP service-account JWT-bearer grant | Apigee X trial org + Akeyless lab gateway |
 
 ### Built, Not Yet Tested
 
@@ -147,6 +148,7 @@ Per-rotator runbooks live under [`runbooks/`](runbooks/). Each covers the comple
 | `azuredevops_sp_token` (Azure DevOps) | [runbooks/azuredevops-sp-token.md](runbooks/azuredevops-sp-token.md) |
 | `github_app_token` | [runbooks/github-app-token.md](runbooks/github-app-token.md) |
 | `openobserve_token` / `openobserve_password` | [runbooks/openobserve.md](runbooks/openobserve.md) |
+| `apigee_x_token` | [runbooks/apigee-x-token.md](runbooks/apigee-x-token.md) |
 
 More runbooks will be added as each rotator is validated in production.
 
