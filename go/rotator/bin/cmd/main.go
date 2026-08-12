@@ -9,6 +9,7 @@ import (
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/registry"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/aerospike"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/ansible"
+	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/apigee"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/argocd"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/azuredevops"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/cloudflare"
@@ -55,6 +56,9 @@ func main() {
 	reg.Register(cloudflare.New())
 	reg.Register(terraform.New())
 	reg.Register(argocd.New())
+
+	// Google Cloud
+	reg.Register(apigee.New())
 
 	// Artifact registries
 	reg.Register(jfrog.New())
