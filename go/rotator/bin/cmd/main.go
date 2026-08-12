@@ -20,6 +20,7 @@ import (
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/gitlab"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/grafana"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/jfrog"
+	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/microsoftgraph"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/newrelic"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/okta"
 	"github.com/akeylesslabs/custom-producer/go/rotator/internal/targets/openobserve"
@@ -79,6 +80,7 @@ func main() {
 	reg.Register(confluent.New())
 	reg.Register(servicenow.New())
 	reg.Register(okta.New())
+	reg.Register(microsoftgraph.New())
 
 	// Databases
 	reg.Register(aerospike.New())
