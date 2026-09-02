@@ -37,22 +37,31 @@ The design separates the two. The payload carries only non-secret context plus t
 ```mermaid
 sequenceDiagram
     participant GW as Akeyless Gateway
-    participant WT as Web Target (/sync/rotate)
+    participant WT as Web Target
     participant R as Rotator
     participant Auth as auth.akeyless.io
     participant OAuth as oauth2.googleapis.com
 
-    GW->>WT: POST /sync/rotate (AkeylessCreds header + clean payload)
-    WT->>R: deliver request
-    R->>Auth: validate-producer-credentials (expected_access_id)
-    Auth-->>R: access_id
-    Note over R: reject with 401 if access_id != AKEYLESS_ACCESS_ID
-    R->>R: read service-account key from env (APIGEE_SERVICE_ACCOUNT_JSON)
-    R->>R: sign RS256 JWT assertion (iss, scope, aud, iat, exp, jti)
-    R->>OAuth: POST grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
-    OAuth-->>R: access_token + expires_in
-    R-->>GW: updated payload (token + expires_at set; no private key)
-    GW->>GW: store new secret value
+    GW->>WT: POST /sync/rotate
+    Note right of GW: AkeylessCreds header<br/>Clean payload
+
+    WT->>R: Forward rotation request
+
+    R->>Auth: Validate producer credentials<br/>with expected_access_id
+    Auth-->>R: Return access_id
+
+    alt access_id does not match AKEYLESS_ACCESS_ID
+        R-->>GW: 401 Unauthorized
+    else Credentials are valid
+        R->>R: Read service-account key from<br/>APIGEE_SERVICE_ACCOUNT_JSON
+        R->>R: Sign RS256 JWT assertion<br/>iss, scope, aud, iat, exp, jti
+
+        R->>OAuth: Request OAuth access token<br/>using JWT bearer grant
+        OAuth-->>R: access_token and expires_in
+
+        R-->>GW: Return updated payload<br/>token and expires_at<br/>No private key
+        GW->>GW: Store new secret value
+    end
 ```
 
 The service-account key never appears in the request or response body. The gateway stores only the clean payload that the rotator returns.
